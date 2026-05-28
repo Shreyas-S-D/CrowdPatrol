@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdPatrol - Live Dashboard</title>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background: #0a0a1a; 
+            color: #fff; 
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a3e, #0d0d2b);
+            padding: 20px;
+            text-align: center;
+            border-bottom: 2px solid #2a2a5a;
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .card {
+            background: #1a1a3e;
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid #2a2a5a;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .metric-value {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .risk-Low { color: #00ff88; }
+        .risk-Medium { color: #ffaa00; }
+        .risk-High { 
+            color: #ff4444; 
+            animation: pulse 1s infinite; 
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .alert-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .alert-item {
+            background: #2a2a5a;
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #ffaa00;
+        }
+        .alert-item.high {
+            border-left-color: #ff4444;
+            background: #3a1a1a;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+        .acknowledge-btn {
+            background: #00ff88;
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚨 CrowdPatrol Dashboard</h1>
+        <p>Real-Time Crowd Monitoring System</p>
+        <div id="connection-status" class="status-badge" style="background: #ffaa00;">
+            Connecting...
+        </div>
+    </div>
+    
+    <div class="dashboard">
+        <!-- Risk Level Card -->
+        <div class="card">
+            <h3>⚠️ Risk Level</h3>
+            <div id="risk-level" class="metric-value">--</div>
+            <p>Combined Score: <span id="risk-score">--</span></p>
+        </div>
+        
+        <!-- Person Count Card -->
+        <div class="card">
+            <h3>👥 Person Count</h3>
+            <div id="person-count" class="metric-value" style="color: #00aaff;">0</div>
+        </div>
+        
+        <!-- Density Card -->
+        <div class="card">
+            <h3>📊 Max Density</h3>
+            <div id="density" class="metric-value" style="color: #aa88ff;">0</div>
+            <p>persons per zone</p>
+        </div>
+        
+        <!-- Anomaly Card -->
+        <div class="card">
+            <h3>🔍 Anomaly Score</h3>
+            <div id="anomaly" class="metric-value" style="color: #ffaa00;">0</div>
+        </div>
+    </div>
+    
+    <!-- Alerts Panel -->
+    <div class="card" style="margin: 20px;">
+        <h3>📋 Recent Alerts</h3>
+        <div id="alerts-list" class="alert-list">
+            <p style="color: #666;">No alerts yet...</p>
+        </div>
+    </div>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCJGh1EAaGcmEkEzF-kEfqd85yZItdzK0o",
+            authDomain: "crowdpatrol.firebaseapp.com",
+            databaseURL: "https://crowdpatrol-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "crowdpatrol",
+            storageBucket: "crowdpatrol.firebasestorage.app",
+            messagingSenderId: "163804245972",
+            appId: "G-LYZHB9JRT6"
+        };
+        
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        
+        // Connection status
+        const connectedRef = database.ref(".info/connected");
+        connectedRef.on("value", (snap) => {
+            const statusEl = document.getElementById("connection-status");
+            if (snap.val() === true) {
+                statusEl.textContent = "🟢 Live";
+                statusEl.style.background = "#00ff88";
+                statusEl.style.color = "#000";
+            } else {
+                statusEl.textContent = "🔴 Disconnected";
+                statusEl.style.background = "#ff4444";
+            }
+        });
+        
+        // Real-time dashboard updates
+        const dashboardRef = database.ref("dashboard");
+        dashboardRef.on("value", (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                // Update metrics
+                document.getElementById("risk-level").textContent = data.risk_level || "--";
+                document.getElementById("risk-level").className = 
+                    `metric-value risk-${data.risk_level || 'Low'}`;
+                document.getElementById("risk-score").textContent = 
+                    data.combined_score || "0";
+                document.getElementById("person-count").textContent = 
+                    data.person_count || "0";
+                document.getElementById("density").textContent = 
+                    data.max_density || "0";
+                document.getElementById("anomaly").textContent = 
+                    (data.anomaly_score || 0).toFixed(2);
+            }
+        });
+        
+        // Real-time alerts
+        const alertsRef = database.ref("alerts");
+        alertsRef.orderByChild("acknowledged").equalTo(false).limitToLast(10)
+            .on("value", (snapshot) => {
+                const alertsList = document.getElementById("alerts-list");
+                const alerts = snapshot.val();
+                
+                if (!alerts) {
+                    alertsList.innerHTML = '<p style="color: #666;">No active alerts</p>';
+                    return;
+                }
+                
+                alertsList.innerHTML = "";
+                Object.entries(alerts).reverse().forEach(([key, alert]) => {
+                    const alertDiv = document.createElement("div");
+                    alertDiv.className = `alert-item ${alert.risk_level === 'High' ? 'high' : ''}`;
+                    alertDiv.innerHTML = `
+                        <strong>${alert.risk_level} Risk</strong>
+                        <span style="float: right;">${new Date(alert.timestamp).toLocaleTimeString()}</span>
+                        <p>Score: ${alert.combined_score} | Density: ${alert.density} | Persons: ${alert.person_count}</p>
+                        <button class="acknowledge-btn" onclick="acknowledgeAlert('${key}')">
+                            ✓ Acknowledge
+                        </button>
+                    `;
+                    alertsList.appendChild(alertDiv);
+                });
+            });
+        
+        // Acknowledge alert
+        function acknowledgeAlert(alertKey) {
+            database.ref(`alerts/${alertKey}`).update({
+                acknowledged: true,
+                acknowledged_by: "Dashboard User",
+                acknowledged_at: new Date().toISOString()
+            });
+        }
+    </script>
+</body>
+</html>

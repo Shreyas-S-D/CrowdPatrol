@@ -1,0 +1,62 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+env/
+crowdpatrol_env/
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+
+# VS Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# ML models
+models/*.pt
+models/*.pth
+models/*.onnx
+
+# Generated output
+output/
+
+# Environments
+venv/
+env/
+crowdpatrol_env/
+
+# Secrets
+.env
+*.pem
+*.key
+serviceAccountKey.json
+google-services.json
+firebase-adminsdk*.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Logs/output
+logs/
+output/firebase-credentials.json
+firebase-credentials.json
+*.json
