@@ -67,18 +67,19 @@ Potential causes to investigate:
 - [x] Detect sudden or abnormal movement acceleration patterns.
 
 ### Phase 3 Completed (Risk Assessment Engine Enhancement)
-- [x] Multi-factor composite risk scoring combining:
-  1. Spatial Density ($w_1 = 0.35$, cap $= 30.0$ persons/cell)
-  2. Density Growth Rate ($w_2 = 0.15$, cap $= 10.0$ persons/sec)
-  3. Optical Flow Speed ($w_3 = 0.15$, cap $= 3.0$ px/f)
-  4. Flow Conflict / Turbulence ($w_4 = 0.15$, $1.0 - \text{coherence}$)
-  5. Acceleration Spikes ($w_5 = 0.10$, cap $= 4.0$ cells)
-  6. Localized Velocity Anomaly ($w_6 = 0.10$, cap $= 3.0$ px/f)
-- [x] **Deterministic camera-motion factor isolation**: When `camera_motion_detected == True`, all optical flow factors are excluded from active scoring, and active weights re-normalize to Spatial Density ($70\%$) and Growth ($30\%$).
-- [x] **Temporal EMA & Hysteresis State Machine**: Continuous EMA smoothing ($\alpha = 0.25$) and state machine managing `LOW`, `MEDIUM`, `HIGH` thresholds ($40/35$ and $70/65$) preventing label flickering.
+- [x] Multi-factor composite risk scoring combining 6 factors.
+- [x] **Deterministic camera-motion factor isolation**: Excludes motion factors when camera panning.
+- [x] **Temporal EMA & Hysteresis State Machine**: Smooths score ($\alpha = 0.25$) and manages `LOW`/`MEDIUM`/`HIGH` states ($40/35$ and $70/65$).
 - [x] **Estimated Data-Quality Indicator ($C_{\text{data}}$)**: Reports heuristic data-quality score ($0.50, 0.75, 1.00$).
 - [x] **100% Legacy Compatibility**: Preserved `assess_risk()` baseline output signatures.
-- [x] **Validation & Performance**: 100% test pass rate across 10 test suites in `tests/test_risk.py`. Risk engine execution latency: **43.63 µs per assessment** (22,919 assessments/sec). Pipeline execution speed: **~22.2 FPS** (Min: 9.2 FPS).
+
+### Phase 4 Completed (Firebase & Streamlit Dashboard Synchronization)
+- [x] **Normalized 19-Key Payload Schema**: Transmits **16 primary telemetry fields** (`person_count`, `max_density`, `risk_level`, `combined_score`, `raw_score`, `smoothed_score`, `growth_rate`, `data_quality_score`, `avg_speed`, `max_speed`, `dominant_direction`, `camera_motion_detected`, `sudden_movement_count`, `anomaly_score`, `fps`, `last_frame_time`) + **3 backward-compatibility aliases** (`density`, `risk`, `anomaly`).
+- [x] **Decoupled Telemetry Helper Module (`dashboard/dashboard_utils.py`)**: Isolated pure Python helpers for payload normalization, type coercion, ISO timestamp parsing, staleness evaluation, connection status classification, and resilient CSV fallback loading.
+- [x] **Robust Offline CSV Fallback**: Automatically loads local `output/metrics_log.csv` or `logs/*.csv` when Firebase is unreachable, safely handling missing files, 0-byte files, corrupted text, missing columns, and NaN values without crashing.
+- [x] **Stale-Data & Heartbeat Detection**: Flags telemetry as `STALE` if `last_frame_time` is $> 10 \text{ seconds}$ old, preventing operators from confusing paused feeds with active streaming.
+- [x] **Fail-Safe Exception Suppression**: Firebase write failures raise a single throttled warning message, allowing local execution to continue uninterrupted.
+- [x] **Streamlit UI Enhancements**: Integrated data quality score badge, camera motion indicator, directional crowd heading, risk score comparison (Raw vs Smoothed), and academic prototype disclaimers across all dashboard pages.
 
 > **System Capability Notice**:
 > CrowdPatrol provides **automated crowd density and motion-anomaly monitoring**. The system is validated for the tested benchmark scenarios and is an experimental prototype; it does **not** claim stampede prediction, guaranteed warning lead times, or universal production readiness.
