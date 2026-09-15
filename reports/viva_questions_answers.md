@@ -136,10 +136,10 @@ Hysteresis prevents rapid toggling between Low, Medium, and High states near bou
 
 ### Q13: How are active factor weights re-normalized when camera motion occurs?
 **Answer:**  
-Normally, enhanced risk mode combines density ($0.30$), growth ($0.15$), speed ($0.15$), coherence ($0.10$), spike ($0.10$), conflict ($0.10$), and local anomaly ($0.10$), summing to $1.00$.  
-When `camera_motion_detected == True`, motion weights ($0.55$ total) are set to $0.0$. The remaining active weights (density $0.30$ and growth $0.15$, total $0.45$) are re-normalized:
-$$W_{\text{density}}' = \frac{0.30}{0.45} \approx 0.667, \quad W_{\text{growth}}' = \frac{0.15}{0.45} \approx 0.333$$
-$$W_{\text{density}}' + W_{\text{growth}}' = 1.00$$
+In `src/risk_assessment.py`, the default static factor weights are: density ($0.35$), density growth ($0.15$), motion speed ($0.15$), flow conflict ($0.15$), acceleration spikes ($0.10$), and localized anomaly ($0.10$), summing to $1.00$.<br/>
+When `camera_motion_detected == True`, motion-derived factors ($0.50$ total weight) are set to $0.0$. The remaining active factors (density $0.35$ and density growth $0.15$, total $0.50$) are re-normalized so active weights sum to $1.00$:
+$$W_{\text{density}}' = \frac{0.35}{0.50} = 0.70, \quad W_{\text{growth}}' = \frac{0.15}{0.50} = 0.30$$
+$$W_{\text{density}}' + W_{\text{growth}}' = 0.70 + 0.30 = 1.00$$
 
 ---
 
@@ -157,14 +157,14 @@ CrowdPatrol serializes a **19-key JSON payload** containing 16 primary fields an
 **Answer:**  
 If Firebase RTDB initialization fails, or if a network disconnect occurs during streaming:
 1. The Vision Pipeline catches the exception silently without crashing.
-2. Telemetry records are immediately written to a local buffer and saved to `telemetry_log.csv`.
-3. The Streamlit dashboard automatically detects offline mode and reads telemetry from `telemetry_log.csv`, ensuring uninterrupted monitoring.
+2. Telemetry records are immediately written to local CSV logs at `logs/metrics_<timestamp>.csv` (or default fallback `output/metrics_log.csv`).
+3. The Streamlit dashboard automatically detects offline mode and reads telemetry from the CSV logs, ensuring uninterrupted monitoring.
 
 ---
 
 ### Q16: How is the Streamlit user dashboard structured?
 **Answer:**  
-The Streamlit dashboard (`dashboard/app.py`) provides an interactive web UI:
+The Streamlit dashboard (`dashboard/app.py` or `dashboard/simple_dashboard.py`) provides an interactive web UI:
 - **Live Stream View:** Displays processed video frames with bounding boxes, track IDs, grid overlays, and motion vectors.
 - **KPI Metrics Cards:** Shows live person count, max density, smoothed risk score, FPS, and data quality score.
 - **Risk Level Alert Badge:** Displays dynamic color-coded status (`LOW` - Green, `MEDIUM` - Yellow, `HIGH` - Red).
@@ -177,16 +177,16 @@ The Streamlit dashboard (`dashboard/app.py`) provides an interactive web UI:
 ### Q17: What are the verified performance benchmarks of CrowdPatrol?
 **Answer:**  
 Measured empirical performance on an Intel CPU development machine:
-- **Risk Engine Overhead:** $98.08 \, \mu\text{s}$ per evaluation ($\sim 10,196$ evaluations/sec).
+- **Risk Engine Overhead:** $98.08 \, \mu\text{s} - 119.80 \, \mu\text{s}$ per evaluation ($\sim 8,347 - 10,196$ evaluations/sec).
 - **Downscaled Optical Flow Latency ($320 \times 180$):** $22.79 \, \text{ms}$ per frame.
-- **Full Vision Pipeline FPS:** $12.2 \, \text{FPS}$ average (Min: $5.6 \, \text{FPS}$, Max: $15.0 \, \text{FPS}$, with `detection_interval = 3`).
+- **Full Vision Pipeline FPS:** $11.8 - 12.2 \, \text{FPS}$ average (Min: $3.3 - 5.6 \, \text{FPS}$, Max: $15.0 \, \text{FPS}$, with `detection_interval = 3`).
 
 ---
 
 ### Q18: How was the software verified against edge cases?
 **Answer:**  
 The system underwent rigorous automated testing:
-- **57 Automated Unit & Integration Tests:** $100\%$ pass rate across 6 test modules (`test_risk.py`, `test_motion.py`, `test_detection.py`, etc.).
+- **32 Automated Pytest Test Cases:** $100\%$ pass rate across 5 test modules (`test_risk.py`, `test_motion.py`, `test_detection.py`, `test_firebase_dashboard.py`, `test_phase5_validation.py`), plus 9 script-based validation check functions in `scratch/phase3_validation.py`.
 - **13 Operational Scenarios Tested (A through M):** Including camera pan/tilt, zero/negative elapsed time, high density growth, maximum speed surges, boundary threshold deadbands, and network failure fallbacks.
 
 ---

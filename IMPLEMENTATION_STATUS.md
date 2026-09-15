@@ -69,7 +69,7 @@ Potential causes to investigate:
 ### Phase 3 Completed (Risk Assessment Engine Enhancement)
 - [x] Multi-factor composite risk scoring combining 6 factors.
 - [x] **Deterministic camera-motion factor isolation**: Excludes motion factors when camera panning.
-- [x] **Temporal EMA & Hysteresis State Machine**: Smooths score ($\alpha = 0.25$) and manages `LOW`/`MEDIUM`/`HIGH` states ($40/35$ and $70/65$).
+- [x] **Temporal EMA & Hysteresis State Machine**: Smooths score ($\alpha = 0.30$) and manages `LOW`/`MEDIUM`/`HIGH` states ($40/35$ and $70/65$).
 - [x] **Estimated Data-Quality Indicator ($C_{\text{data}}$)**: Reports heuristic data-quality score ($0.50, 0.75, 1.00$).
 - [x] **100% Legacy Compatibility**: Preserved `assess_risk()` baseline output signatures.
 
@@ -83,9 +83,9 @@ Potential causes to investigate:
 - [x] **End-to-End Pipeline Validation**: Verified complete workflow (Camera/Video $\to$ YOLOv8 $\to$ DeepSORT $\to$ Density $\to$ Optical Flow $\to$ Enhanced Risk $\to$ Firebase $\to$ Dashboard).
 - [x] **Scenario-Based Testing (Scenarios A through M)**: 100% pass rate across 13 distinct operational scenarios (low/high density, growth rate, fast motion, acceleration spikes, turbulent flow, camera pan, missing motion, Firebase write failure, CSV fallback errors, stale data, malformed timestamps).
 - [x] **Empirical Performance Benchmarks**:
-  - Risk Engine Latency: **98.08 µs / assessment** (10,196 ops/sec).
+  - Risk Engine Latency: **98.08 µs – 119.80 µs / assessment** (8,347 – 10,196 ops/sec).
   - Downscaled Optical Flow Latency: **22.79 ms / frame**.
-  - Pipeline Throughput: **12.2 FPS** average (Min: 5.6 FPS, Max: 15.0 FPS on CPU).
+  - Pipeline Throughput: **11.8 – 12.2 FPS** average (Min: 3.3 – 5.6 FPS).
 - [x] **Automated Validation Suite**: Created `tests/test_phase5_validation.py` and `reports/phase5_validation_report.md`.
 - [x] **Demonstration Checklist**: Prepared live step-by-step verification checklist for project reviewers.
 

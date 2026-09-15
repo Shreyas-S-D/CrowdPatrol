@@ -73,7 +73,7 @@
 - **Key Points**:
   - Video Input $\to$ YOLOv8 Person Detector (`yolov8n.pt`) $\to$ DeepSORT Tracker (Kalman filter).
   - Tracks $\to$ Density Estimator ($4 \times 4$ grid) + Crowd Motion Analyzer (Farneback flow).
-  - Metrics $\to$ Enhanced Risk Assessor (EMA $\alpha=0.25$, Hysteresis $40/35$ & $70/65$).
+  - Metrics $\to$ Enhanced Risk Assessor (EMA $\alpha=0.30$, Hysteresis $40/35$ & $70/65$).
   - Telemetry Snapshot (19 keys) $\to$ Firebase RTDB / CSV Fallback $\to$ Streamlit Dashboard.
 - **Suggested Visual**: Detailed System Architecture Diagram (Figure 4.1).
 - **Speaker Notes**: "Here is our full data pipeline. Notice how telemetry is decoupled from the visualization frontend, ensuring high stability."
@@ -124,14 +124,14 @@
 
 ## Slide 12: Testing & Experimental Results
 - **Key Points**:
-  - **Test Suite Results**: 57 total tests passed across 6 test suites (`100% PASS`).
+  - **Test Suite Results**: 32 automated pytest test cases and 9 standalone validation check functions passed with `100% PASS`.
   - **Scenario Testing**: 13 operational scenarios passed (Scenarios A through M).
   - **Measured Performance**:
-    - Risk Engine Latency: **98.08 µs/assessment** (10,196 ops/sec).
+    - Risk Engine Latency: **98.08 µs – 119.80 µs/assessment** (8,347 – 10,196 ops/sec).
     - Downscaled Optical Flow: **22.79 ms/frame**.
-    - Full Pipeline Speed: **12.2 FPS** average on CPU (Min: 5.6 FPS).
+    - Full Pipeline Speed: **11.8 – 12.2 FPS** average on CPU (Min: 3.3 – 5.6 FPS).
 - **Suggested Visual**: Summary Table of Scenario-Based Testing Results.
-- **Speaker Notes**: "We validated CrowdPatrol across 57 automated test suites and 13 operational scenarios. On CPU execution, our pipeline runs at ~12.2 FPS."
+- **Speaker Notes**: "We validated CrowdPatrol across 32 automated pytest test cases, 9 standalone validation functions, and 13 operational scenarios. On CPU execution, our pipeline runs at ~12 FPS."
 
 ---
 
@@ -160,6 +160,6 @@
 - **Key Points**:
   - CrowdPatrol successfully demonstrates automated crowd density and motion-anomaly monitoring.
   - Achieved robust multi-factor risk scoring, deterministic camera motion isolation, and resilient offline CSV fallback.
-  - All 57 tests and 13 scenarios passed with 100% verification.
+  - All 32 pytest tests, 9 validation check functions, and 13 scenarios passed with 100% verification.
 - **Closing Statement**: "Thank you for your time and attention. We are ready to take your questions."
 - **Speaker Notes**: "That concludes our presentation. We welcome your questions."
