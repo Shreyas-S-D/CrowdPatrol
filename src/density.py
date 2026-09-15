@@ -7,7 +7,8 @@ class DensityEstimator:
     
     def calculate_density(self, tracks, frame_shape):
         height, width = frame_shape[:2]
-        cell_h, cell_w = height // self.grid_size[0], width // self.grid_size[1]
+        cell_h = max(1, height // self.grid_size[0])
+        cell_w = max(1, width // self.grid_size[1])
         
         density_map = np.zeros(self.grid_size, dtype=int)
         
@@ -18,8 +19,8 @@ class DensityEstimator:
             center_x = (x1 + x2) / 2
             center_y = (y1 + y2) / 2
             
-            grid_y = min(int(center_y // cell_h), self.grid_size[0] - 1)
-            grid_x = min(int(center_x // cell_w), self.grid_size[1] - 1)
+            grid_y = max(0, min(int(center_y // cell_h), self.grid_size[0] - 1))
+            grid_x = max(0, min(int(center_x // cell_w), self.grid_size[1] - 1))
             density_map[grid_y, grid_x] += 1
         
         return density_map, np.max(density_map)

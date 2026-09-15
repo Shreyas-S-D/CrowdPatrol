@@ -120,6 +120,8 @@ combined_score = float(data.get("combined_score", 0))
 person_count = int(data.get("person_count", 0))
 max_density = int(data.get("max_density", 0))
 anomaly_score = float(data.get("anomaly_score", 0))
+growth_rate = float(data.get("growth_rate", 0.0))
+data_quality_score = float(data.get("data_quality_score", 1.0))
 fps = int(data.get("fps", 0))
 last_update = data.get("last_frame_time", "Never")
 
@@ -135,11 +137,11 @@ st.session_state.time_history.append(current_time)
 # Status Box
 with status_box.container():
     if risk_level == "High":
-        st.error(f"🔴 HIGH RISK! Score: {combined_score:.1f}")
+        st.error(f"🔴 HIGH RISK! Score: {combined_score:.1f} | Data Quality: {data_quality_score*100:.0f}%")
     elif risk_level == "Medium":
-        st.warning(f"🟡 Medium Risk - Score: {combined_score:.1f}")
+        st.warning(f"🟡 Medium Risk - Score: {combined_score:.1f} | Data Quality: {data_quality_score*100:.0f}%")
     elif risk_level == "Low":
-        st.success(f"🟢 Normal - Score: {combined_score:.1f}")
+        st.success(f"🟢 Normal - Score: {combined_score:.1f} | Data Quality: {data_quality_score*100:.0f}%")
     else:
         st.info("⏳ Waiting for data...")
     
@@ -154,14 +156,14 @@ risk_placeholder.markdown(f"""
             text-align:center; border:3px solid {color}; margin-bottom:10px;">
     <h3 style="color:{color};">{risk_level.upper()}</h3>
     <h1 style="color:{color};">{combined_score:.1f}</h1>
-    <p>Risk Score</p>
+    <p>Risk Score | Influx: {growth_rate:.1f} p/s | Quality: {data_quality_score*100:.0f}%</p>
 </div>
 """, unsafe_allow_html=True)
 
 # Metrics
 person_metric.metric("👥 Persons", person_count)
 density_metric.metric("📊 Max Density", max_density)
-anomaly_bar.progress(min(anomaly_score, 1.0), text=f"Anomaly: {anomaly_score:.2f}")
+anomaly_bar.progress(min(max(0.0, data_quality_score), 1.0), text=f"Data Quality Score: {data_quality_score*100:.0f}%")
 fps_metric.metric("⚡ FPS", fps)
 
 # Charts

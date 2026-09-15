@@ -20,31 +20,33 @@ def generate_heatmap(frame, tracks, grid_cols=8, grid_rows=6):
         overlay: Frame with heatmap blended
     """
     h, w = frame.shape[:2]
-    cell_w = w // grid_cols
-    cell_h = h // grid_rows
+    cell_w = max(1, w // grid_cols)
+    cell_h = max(1, h // grid_rows)
     
     # Count persons in each cell
     density_grid = np.zeros((grid_rows, grid_cols), dtype=np.float32)
     
     for track in tracks:
-        x1, y1, x2, y2 = track[:4]
+        x1, y1, x2, y2 = map(float, track[:4])
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
         
-        col = min(int(center_x // cell_w), grid_cols - 1)
-        row = min(int(center_y // cell_h), grid_rows - 1)
+        col = max(0, min(int(center_x // cell_w), grid_cols - 1))
+        row = max(0, min(int(center_y // cell_h), grid_rows - 1))
         
         density_grid[row, col] += 1
     
     # Normalize to 0-255
     max_val = np.max(density_grid)
     if max_val > 0:
-        density_grid = (density_grid / max_val * 255).astype(np.uint8)
+        density_grid_norm = (density_grid / max_val * 255).astype(np.uint8)
+    else:
+        density_grid_norm = density_grid.astype(np.uint8)
     
-    # Resize to frame size
-    heatmap = cv2.resize(density_grid, (w, h), interpolation=cv2.INTER_LINEAR)
+    # Resize to frame size and convert to uint8 for OpenCV 5.0
+    heatmap = cv2.resize(density_grid_norm, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.uint8)
     
-    # Apply color: Blue→Green→Yellow→Red
+    # Apply color: Blue->Green->Yellow->Red
     heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
     
     # Blend with original frame

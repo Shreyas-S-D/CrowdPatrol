@@ -162,7 +162,38 @@ class FrameAnnotator:
         return frame
     
     @staticmethod
-    def create_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4)):
+    def draw_optical_flow_grid(frame, grid_matrix, grid_size=(4, 4)):
+        """Draw motion direction arrows and sudden movement highlights on grid cells"""
+        h, w = frame.shape[:2]
+        cell_h, cell_w = max(1, h // grid_size[0]), max(1, w // grid_size[1])
+        
+        for r in range(min(len(grid_matrix), grid_size[0])):
+            for c in range(min(len(grid_matrix[r]), grid_size[1])):
+                cell = grid_matrix[r][c]
+                cx = c * cell_w + cell_w // 2
+                cy = r * cell_h + cell_h // 2
+                
+                # Highlight sudden movement with red flashing cell boundary
+                if cell.sudden_movement:
+                    x1, y1 = c * cell_w, r * cell_h
+                    x2, y2 = (c + 1) * cell_w, (r + 1) * cell_h
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                    cv2.putText(frame, "SPIKE", (x1 + 5, y1 + 20),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                
+                # Draw arrow if cell has meaningful motion magnitude (> 0.5 px/frame)
+                if cell.magnitude > 0.5:
+                    # Arrow tip scaled by magnitude
+                    arrow_len = min(max(10, int(cell.magnitude * 5)), min(cell_w, cell_h) // 2)
+                    end_x = int(cx + (cell.vx / max(cell.magnitude, 1e-5)) * arrow_len)
+                    end_y = int(cy + (cell.vy / max(cell.magnitude, 1e-5)) * arrow_len)
+                    
+                    arrow_color = (0, 255, 255) if not cell.sudden_movement else (0, 0, 255)
+                    cv2.arrowedLine(frame, (cx, cy), (end_x, end_y), arrow_color, 2, tipLength=0.3)
+        return frame
+
+    @staticmethod
+    def create_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4), grid_matrix=None):
         """Create complete dashboard view with all overlays"""
         frame = frame.copy()
         
@@ -174,6 +205,10 @@ class FrameAnnotator:
         # Density grid
         frame = FrameAnnotator.draw_density_zones(frame, density_map, grid_size)
         
+        # Optical flow motion arrows overlay
+        if grid_matrix is not None:
+            frame = FrameAnnotator.draw_optical_flow_grid(frame, grid_matrix, grid_size)
+        
         # Info panel (right side)
         h, w = frame.shape[:2]
         panel_x = w - 220
@@ -184,15 +219,17 @@ class FrameAnnotator:
             ("Persons", metrics.get("person_count", 0)),
             ("Max Density", metrics.get("density", 0)),
             ("Anomaly", f"{metrics.get('anomaly', 0):.2f}"),
+            ("Avg Speed", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
+            ("Heading", str(metrics.get("dominant_direction", "STATIC"))),
             ("Risk Score", f"{metrics.get('combined_score', 0):.1f}"),
         ]
         
         for label, value in info_items:
             cv2.putText(frame, f"{label}:", (panel_x + 10, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-            cv2.putText(frame, str(value), (panel_x + 120, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            y += 35
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(frame, str(value), (panel_x + 110, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            y += 30
         
         return frame
 

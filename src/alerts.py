@@ -103,7 +103,7 @@ class FirebaseAlertManager:
             return True
         return (datetime.now() - self.last_notification_time).total_seconds() > self.notification_cooldown
     
-    def store_alert(self, risk_level, density, anomaly_score, person_count, combined_score):
+    def store_alert(self, risk_level, density, anomaly_score, person_count, combined_score, growth_rate=0.0, data_quality_score=1.0):
         if not self.can_send_alert():
             return None
         
@@ -119,6 +119,8 @@ class FirebaseAlertManager:
             "anomaly_score": float(round(anomaly_score, 3)),  # ← float()
             "person_count": int(person_count),                 # ← int()
             "combined_score": float(round(combined_score, 1)), # ← float()
+            "growth_rate": float(round(growth_rate, 2)),
+            "data_quality_score": float(round(data_quality_score, 2)),
             "acknowledged": False,
             "acknowledged_by": None,
             "acknowledged_at": None
@@ -326,6 +328,10 @@ class FirebaseAlertManager:
                 "risk_level": str(metrics.get("risk", "Low")),
                 "combined_score": clean_value(metrics.get("combined_score", 0)),
                 "anomaly_score": clean_value(metrics.get("anomaly", 0)),
+                "growth_rate": clean_value(metrics.get("growth_rate", 0.0)),
+                "data_quality_score": clean_value(metrics.get("data_quality_score", 1.0)),
+                "raw_score": clean_value(metrics.get("raw_score", 0.0)),
+                "smoothed_score": clean_value(metrics.get("smoothed_score", 0.0)),
                 "last_frame_time": datetime.now().isoformat(),
                 "fps": clean_value(metrics.get("fps", 0))
             }

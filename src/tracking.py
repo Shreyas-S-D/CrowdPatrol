@@ -11,7 +11,7 @@ class PersonTracker:
         Returns list of tracks: [x1,y1,x2,y2,track_id]
         """
         if len(detections) == 0:
-            tracks = self.tracker.update_tracks([], frame=frame)
+            tracks = self.tracker.update_tracks([], embeds=[])
         else:
             tracks = self.tracker.update_tracks(detections, frame=frame)
         
@@ -19,7 +19,14 @@ class PersonTracker:
         for track in tracks:
             if track.is_confirmed():
                 bbox = track.to_ltrb()  # [x1,y1,x2,y2]
-                track_id = track.track_id
-                active_tracks.append([*bbox, track_id])
+                track_id = str(track.track_id)
+                active_tracks.append([float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]), track_id])
         
-        return np.array(active_tracks) if active_tracks else np.empty((0, 5))
+        return active_tracks
+
+    def predict(self):
+        """
+        Advance Kalman filter prediction on intermediate frames without CNN feature extraction.
+        Returns list of active tracks: [x1,y1,x2,y2,track_id]
+        """
+        return self.update([], frame=None)
