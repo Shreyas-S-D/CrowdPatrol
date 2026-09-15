@@ -306,40 +306,60 @@ class FirebaseAlertManager:
             return []
     
     def update_dashboard_data(self, metrics):
+        """
+        Pushes normalized telemetry snapshot (16 primary fields + 3 aliases = 19 keys) to Firebase RTDB.
+        Handles runtime connection failures cleanly without crashing main loop or spamming logs.
+        """
         try:
             dashboard_ref = self.rtdb.reference('dashboard')
             
-            # Force Python native types (not NumPy)
-            import numpy as np
-            
-            def clean_value(v):
-                """Convert NumPy types to Python native types"""
-                if isinstance(v, (np.integer,)):
-                    return int(v)
-                elif isinstance(v, (np.floating,)):
-                    return float(v)
-                elif isinstance(v, np.ndarray):
-                    return v.tolist()
-                return v
-            
-            dashboard_data = {
-                "person_count": clean_value(metrics.get("person_count", 0)),
-                "max_density": clean_value(metrics.get("density", 0)),
-                "risk_level": str(metrics.get("risk", "Low")),
-                "combined_score": clean_value(metrics.get("combined_score", 0)),
-                "anomaly_score": clean_value(metrics.get("anomaly", 0)),
-                "growth_rate": clean_value(metrics.get("growth_rate", 0.0)),
-                "data_quality_score": clean_value(metrics.get("data_quality_score", 1.0)),
-                "raw_score": clean_value(metrics.get("raw_score", 0.0)),
-                "smoothed_score": clean_value(metrics.get("smoothed_score", 0.0)),
-                "last_frame_time": datetime.now().isoformat(),
-                "fps": clean_value(metrics.get("fps", 0))
-            }
+            # Use dashboard_utils normalization helper if available, or inline safe clean logic
+            try:
+                from dashboard.dashboard_utils import normalize_telemetry_payload
+                dashboard_data = normalize_telemetry_payload(metrics)
+            except ImportError:
+                import numpy as np
+                def clean_val(v, default=0.0):
+                    if v is None: return default
+                    if isinstance(v, (np.integer, int)): return int(v)
+                    if isinstance(v, (np.floating, float)): return float(v)
+                    if isinstance(v, bool): return bool(v)
+                    return str(v)
+
+                max_density_val = clean_val(metrics.get("max_density", metrics.get("density", 0)), 0)
+                risk_level_val = str(metrics.get("risk_level", metrics.get("risk", "Low")))
+                anomaly_val = clean_val(metrics.get("anomaly_score", metrics.get("anomaly", 0.0)), 0.0)
+
+                dashboard_data = {
+                    "person_count": clean_val(metrics.get("person_count", 0), 0),
+                    "max_density": max_density_val,
+                    "risk_level": risk_level_val,
+                    "combined_score": clean_val(metrics.get("combined_score", 0.0), 0.0),
+                    "raw_score": clean_val(metrics.get("raw_score", 0.0), 0.0),
+                    "smoothed_score": clean_val(metrics.get("smoothed_score", 0.0), 0.0),
+                    "growth_rate": clean_val(metrics.get("growth_rate", 0.0), 0.0),
+                    "data_quality_score": clean_val(metrics.get("data_quality_score", 1.0), 1.0),
+                    "avg_speed": clean_val(metrics.get("avg_speed", 0.0), 0.0),
+                    "max_speed": clean_val(metrics.get("max_speed", 0.0), 0.0),
+                    "dominant_direction": str(metrics.get("dominant_direction", "STATIONARY")),
+                    "camera_motion_detected": bool(metrics.get("camera_motion_detected", False)),
+                    "sudden_movement_count": clean_val(metrics.get("sudden_movement_count", 0), 0),
+                    "anomaly_score": anomaly_val,
+                    "fps": clean_val(metrics.get("fps", 0.0), 0.0),
+                    "last_frame_time": str(metrics.get("last_frame_time", datetime.now().isoformat())),
+                    # 3 Backward-Compatibility Aliases
+                    "density": max_density_val,
+                    "risk": risk_level_val,
+                    "anomaly": anomaly_val
+                }
             
             dashboard_ref.update(dashboard_data)
             
         except Exception as e:
-            print(f"[!] Failed to update dashboard: {e}")
+            # Throttled error warning (log only if not previously warned recently)
+            if not getattr(self, "_rtdb_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB write failure ({e}). Local execution continues.")
+                self._rtdb_warning_logged = True
 
     
     def store_event_log(self, event_type, details):

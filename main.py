@@ -167,17 +167,25 @@ def main():
             cv2.putText(heatmap_overlay, f"FPS: {avg_fps:.1f}", (20, frame.shape[0] - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             
-            # Log CSV metrics
+            # Log CSV & Telemetry metrics (complete 16 primary + 3 alias structure)
             metrics_payload = {
                 "person_count": person_count,
                 "density": max_density,
+                "max_density": max_density,
                 "anomaly": anomaly_score,
+                "anomaly_score": anomaly_score,
                 "risk": risk_level_str,
+                "risk_level": risk_level_str,
                 "combined_score": combined_score,
                 "raw_score": risk_res["raw_score"],
                 "smoothed_score": risk_res["smoothed_score"],
                 "data_quality_score": risk_res["data_quality_score"],
                 "growth_rate": risk_res["growth_rate"],
+                "avg_speed": motion_summary.get("avg_speed", 0.0),
+                "max_speed": motion_summary.get("max_speed", 0.0),
+                "dominant_direction": motion_summary.get("dominant_direction", "STATIONARY"),
+                "camera_motion_detected": motion_summary.get("camera_motion_detected", False),
+                "sudden_movement_count": motion_summary.get("sudden_movement_count", 0),
                 "fps": avg_fps
             }
             metrics_logger.log(metrics_payload, frame_count)
