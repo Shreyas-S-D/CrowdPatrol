@@ -193,19 +193,41 @@ class FrameAnnotator:
         return frame
 
     @staticmethod
-    def create_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4), grid_matrix=None):
+    def draw_tracks(frame, tracks):
+        """Draw green bounding boxes and DeepSORT track IDs for tracked persons"""
+        for track in tracks:
+            x1, y1, x2, y2, track_id = track
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            
+            # Draw green bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            
+            # Draw track ID badge
+            label = f"ID:{track_id}"
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+            cv2.rectangle(frame, (x1, max(0, y1 - 20)), (x1 + lw + 6, max(20, y1)), (0, 255, 0), -1)
+            cv2.putText(frame, label, (x1 + 3, max(15, y1 - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        return frame
+
+    @staticmethod
+    def create_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4), grid_matrix=None, tracks=None):
         """Create complete dashboard view with all overlays"""
         frame = frame.copy()
         
-        # Risk banner
+        # 1. Bounding Boxes & DeepSORT Track IDs
+        if tracks is not None and len(tracks) > 0:
+            frame = FrameAnnotator.draw_tracks(frame, tracks)
+        
+        # 2. Risk banner
         frame = FrameAnnotator.draw_risk_banner(
             frame, metrics.get("risk", "Low"), metrics.get("combined_score", 0)
         )
         
-        # Density grid
+        # 3. Density grid
         frame = FrameAnnotator.draw_density_zones(frame, density_map, grid_size)
         
-        # Optical flow motion arrows overlay
+        # 4. Optical flow motion arrows overlay
         if grid_matrix is not None:
             frame = FrameAnnotator.draw_optical_flow_grid(frame, grid_matrix, grid_size)
         

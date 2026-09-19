@@ -19,14 +19,16 @@ from src.alerts import FirebaseAlertManager
 from src.motion_analysis import CrowdMotionAnalyzer
 from src.utils import VideoProcessor, MetricsLogger, FrameAnnotator
 
+DEFAULT_MODEL_PATH = "models/crowdpatrol_yolov8n_finetuned_v2.pt" if os.path.exists("models/crowdpatrol_yolov8n_finetuned_v2.pt") else "yolov8n.pt"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="CrowdPatrol Live Monitoring Core")
     parser.add_argument("--source", type=str, default="0",
-                        help="Video source: '0' for webcam, file path ('data/videos/crowd.mp4'), or 'rtsp://...'")
-    parser.add_argument("--model", type=str, default="yolov8n.pt",
-                        help="YOLOv8 model weight path or model type (e.g. yolov8n.pt)")
-    parser.add_argument("--confidence", type=float, default=0.5,
+                        help="Video source: '0' for webcam, file path ('data/videos/youtube_crowd_test.mp4'), or 'rtsp://...'")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL_PATH,
+                        help="YOLOv8 model weight path or model type (e.g. models/crowdpatrol_yolov8n_finetuned_v2.pt or yolov8n.pt)")
+    parser.add_argument("--confidence", type=float, default=0.35,
                         help="Person detection confidence threshold (0.1 - 1.0)")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"],
                         help="Execution device: 'cpu' or 'cuda'")
@@ -69,7 +71,7 @@ def main():
     if args.alerts:
         try:
             alert_manager = FirebaseAlertManager()
-            print("[✓] Firebase Alert Manager active")
+            print("[OK] Firebase Alert Manager active")
         except Exception as e:
             print(f"[!] Warning: Firebase initialization failed ({e}). Proceeding without Firebase sync.")
     
@@ -79,7 +81,7 @@ def main():
         return
     
     info = VideoProcessor.get_video_info(cap)
-    print(f"[✓] Stream Opened: {info['width']}x{info['height']} @ {info['fps']} FPS")
+    print(f"[OK] Stream Opened: {info['width']}x{info['height']} @ {info['fps']} FPS")
     
     writer = None
     if args.save_video:
@@ -90,7 +92,7 @@ def main():
             width=info['width'], 
             height=info['height']
         )
-        print(f"[✓] Saving video output to: {args.save_video}")
+        print(f"[OK] Saving video output to: {args.save_video}")
     
     frame_count = 0
     fps_deque = []
@@ -111,6 +113,9 @@ def main():
             if frame_count == 1 or (frame_count % args.detect_interval == 0):
                 detections = detector.detect(frame)
                 current_tracks = tracker.update(detections, frame)
+                if frame_count <= 15 or frame_count % 30 == 0:
+                    h, w = frame.shape[:2]
+                    print(f"[*] [Frame {frame_count:04d}] DETECTOR CALLED | Res: {w}x{h} | Detections: {len(detections)} | Active Tracks: {len(current_tracks)}")
             else:
                 # Step Kalman filter forward for smooth motion without CNN feature extraction
                 current_tracks = tracker.predict()
@@ -135,9 +140,12 @@ def main():
             combined_score = risk_res["combined_score"]
             person_count = len(current_tracks)
             
-            # Annotations & Visualization Overlay (including motion arrows)
+            # Optional Heatmap blending as background layer
+            heatmap_base, _ = generate_heatmap(frame, current_tracks, draw_grid=False)
+            
+            # Annotations & Visualization Overlay (bounding boxes, track IDs, 4x4 grid, motion vectors, risk banner & info panel)
             annotated_frame = FrameAnnotator.create_dashboard_frame(
-                frame, 
+                heatmap_base, 
                 {
                     "person_count": person_count,
                     "density": max_density,
@@ -149,11 +157,11 @@ def main():
                 },
                 density_map,
                 grid_size=(4, 4),
-                grid_matrix=grid_matrix
+                grid_matrix=grid_matrix,
+                tracks=current_tracks
             )
             
-            # Optional Heatmap blending
-            heatmap_overlay, _ = generate_heatmap(annotated_frame, current_tracks)
+            heatmap_overlay = annotated_frame
             
             t_end = time.perf_counter()
             frame_ms = (t_end - t_start) * 1000.0
@@ -222,7 +230,7 @@ def main():
         if writer:
             writer.release()
         cv2.destroyAllWindows()
-        print("[✓] Pipeline shut down cleanly.")
+        print("[OK] Pipeline shut down cleanly.")
 
 
 if __name__ == "__main__":

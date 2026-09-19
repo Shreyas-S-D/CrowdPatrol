@@ -2,26 +2,29 @@ from deep_sort_realtime.deepsort_tracker import DeepSort
 import numpy as np
 
 class PersonTracker:
-    def __init__(self, max_age=30):
-        self.tracker = DeepSort(max_age=max_age)
-    
+    def __init__(self, max_age=30, n_init=1):
+        self.tracker = DeepSort(max_age=max_age, n_init=n_init)
+        self.last_tracks = []
+
     def update(self, detections, frame):
         """
         Update tracker with new detections.
         Returns list of tracks: [x1,y1,x2,y2,track_id]
         """
-        if len(detections) == 0:
-            tracks = self.tracker.update_tracks([], embeds=[])
-        else:
-            tracks = self.tracker.update_tracks(detections, frame=frame)
+        if len(detections) == 0 and frame is None:
+            # Intermediate skipped frame prediction step
+            return self.last_tracks
+        
+        tracks = self.tracker.update_tracks(detections, frame=frame)
         
         active_tracks = []
         for track in tracks:
-            if track.is_confirmed():
+            if track.is_confirmed() or (track.time_since_update <= 1 and track.hits >= 1):
                 bbox = track.to_ltrb()  # [x1,y1,x2,y2]
                 track_id = str(track.track_id)
                 active_tracks.append([float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]), track_id])
         
+        self.last_tracks = active_tracks
         return active_tracks
 
     def predict(self):

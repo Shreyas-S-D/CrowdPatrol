@@ -1,9 +1,15 @@
+import os
+from pathlib import Path
 from ultralytics import YOLO
 import cv2
 import numpy as np
 
+DEFAULT_MODEL_PATH = "models/crowdpatrol_yolov8n_finetuned_v2.pt" if os.path.exists("models/crowdpatrol_yolov8n_finetuned_v2.pt") else "yolov8n.pt"
+
 class PersonDetector:
-    def __init__(self, model_path="yolov8n.pt", confidence=0.5, device="cpu"):
+    def __init__(self, model_path=None, confidence=0.5, device="cpu"):
+        if model_path is None:
+            model_path = DEFAULT_MODEL_PATH
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.device = device
