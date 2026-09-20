@@ -12,6 +12,7 @@ from datetime import datetime
 from collections import deque
 import sys
 import os
+import json
 from pathlib import Path
 
 # Add project root to sys.path
@@ -25,6 +26,7 @@ from src.risk_assessment import RiskAssessor
 from src.heatmap import generate_heatmap
 from src.alerts import FirebaseAlertManager
 from src.utils import VideoProcessor, MetricsLogger, FrameAnnotator
+from src.camera_devices import discover_camera_devices, test_camera_source, get_camera_display_name
 
 from dashboard.dashboard_utils import (
     normalize_telemetry_payload,
@@ -32,6 +34,13 @@ from dashboard.dashboard_utils import (
     load_offline_csv_fallback,
     determine_connection_status
 )
+
+@st.cache_data(ttl=30)
+def cached_discover_camera_devices():
+    try:
+        return discover_camera_devices()
+    except Exception:
+        return []
 
 # ========== CONNECT TO FIREBASE ==========
 import firebase_admin
@@ -81,7 +90,7 @@ st.sidebar.header("🧭 Operation Mode & Input Selection")
 
 mode = st.sidebar.radio(
     "Select Operating Mode:",
-    ["🎥 Interactive Web Pipeline (Direct Stream)", "📡 Remote Telemetry Stream (Firebase/CSV)"]
+    ["🎥 Interactive Web Pipeline (Direct Stream)", "🖥️ Multi-Camera Command Center (CCTV Grid)", "📡 Remote Telemetry Stream (Firebase/CSV)"]
 )
 
 DEFAULT_MODEL_PATH = "models/crowdpatrol_yolov8n_finetuned_v2.pt" if os.path.exists("models/crowdpatrol_yolov8n_finetuned_v2.pt") else "yolov8n.pt"
@@ -101,7 +110,22 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     )
     
     if input_type == "📷 Live Webcam":
-        webcam_idx = st.sidebar.number_input("Webcam Device Index", min_value=0, max_value=10, value=0)
+        discovered_devs = cached_discover_camera_devices()
+        if discovered_devs:
+            options_labels = [d.display_name for d in discovered_devs]
+            selected_label = st.sidebar.selectbox("📷 Camera Device", options_labels, index=0)
+            selected_dev = next((d for d in discovered_devs if d.display_name == selected_label), discovered_devs[0])
+            webcam_idx = selected_dev.index
+            st.sidebar.caption(f"Index: `{webcam_idx}` | Resolution: `{selected_dev.resolution}` | Status: `{selected_dev.status}`")
+        else:
+            webcam_idx = st.sidebar.number_input("Manual Device Index", min_value=0, max_value=10, value=0)
+            
+        if st.sidebar.button("🔍 Test Camera", key="test_mode1_cam", use_container_width=True):
+            ok, msg, res = test_camera_source(webcam_idx)
+            if ok:
+                st.sidebar.success(f"🟢 {msg}")
+            else:
+                st.sidebar.error(f"🔴 {msg}")
         video_source = webcam_idx
     elif input_type == "📁 Upload Video File":
         uploaded_file = st.sidebar.file_uploader("Upload Video File", type=["mp4", "avi", "mov", "mkv"])
@@ -164,6 +188,126 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     col_start, col_stop = st.sidebar.columns(2)
     with col_start:
         if st.button("▶️ Start Monitoring", use_container_width=True):
+            st.session_state.is_monitoring = True
+    with col_stop:
+        if st.button("⏹️ Stop", use_container_width=True):
+            st.session_state.is_monitoring = False
+
+elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
+    st.sidebar.divider()
+    st.sidebar.header("📹 Camera Source Configuration")
+    
+    config_path = Path("config/cameras.json")
+    if config_path.exists():
+        with open(config_path, "r") as f:
+            cam_json_cfg = json.load(f)
+    else:
+        cam_json_cfg = {"cameras": []}
+        
+    updated_cameras = []
+    
+    for cam_item in cam_json_cfg.get("cameras", []):
+        cam_id = cam_item["id"]
+        with st.sidebar.expander(f"⚙️ {cam_id}: {cam_item.get('name', 'Camera')}", expanded=False):
+            cam_enabled = st.checkbox("Enable Camera Feed", value=cam_item.get("enabled", True), key=f"en_{cam_id}")
+            cam_name = st.text_input("Camera Name", value=cam_item.get("name", cam_id), key=f"name_{cam_id}")
+            
+            src_type_options = ["📁 Recorded Video", "📷 Webcam", "🌐 IP Camera / RTSP"]
+            curr_type = cam_item.get("source_type", "video")
+            type_idx = 0 if curr_type == "video" else (1 if curr_type == "webcam" else 2)
+            
+            sel_type_str = st.selectbox("Source Type", src_type_options, index=type_idx, key=f"stype_{cam_id}")
+            
+            if "Recorded Video" in sel_type_str:
+                new_src_type = "video"
+                new_source = st.text_input("Video File Path", value=str(cam_item.get("source", "data/videos/youtube_crowd_test.mp4")), key=f"src_vid_{cam_id}")
+                new_dev_name = None
+            elif "Webcam" in sel_type_str:
+                new_src_type = "webcam"
+                discovered_devs = cached_discover_camera_devices()
+                default_idx = int(cam_item.get("source")) if str(cam_item.get("source")).isdigit() else 0
+                
+                if discovered_devs:
+                    dev_options = [d.display_name for d in discovered_devs]
+                    matched_opt_idx = 0
+                    for o_i, d_item in enumerate(discovered_devs):
+                        if d_item.index == default_idx:
+                            matched_opt_idx = o_i
+                            break
+                    
+                    sel_dev_label = st.selectbox("📷 Camera Device", dev_options, index=matched_opt_idx, key=f"src_web_sel_{cam_id}")
+                    sel_dev_obj = next((d for d in discovered_devs if d.display_name == sel_dev_label), discovered_devs[0])
+                    new_source = sel_dev_obj.index
+                    new_dev_name = sel_dev_obj.name
+                    st.caption(f"Selected: `{sel_dev_obj.name}` (Device `{new_source}`) | Status: `{sel_dev_obj.status}`")
+                else:
+                    new_source = st.number_input("Manual Device Index", min_value=0, max_value=10, value=default_idx, key=f"src_web_num_{cam_id}")
+                    new_dev_name = f"Webcam (Device {new_source})"
+                
+                if st.button(f"🔍 Test Camera ({cam_id})", key=f"test_cam_{cam_id}", use_container_width=True):
+                    ok, msg, res = test_camera_source(new_source)
+                    if ok:
+                        st.success(f"🟢 {msg}")
+                    else:
+                        st.error(f"🔴 {msg}")
+            else:
+                new_src_type = "rtsp"
+                new_source = st.text_input("RTSP Stream URL", value=str(cam_item.get("source", "rtsp://192.168.1.100:554/live")), key=f"src_rtsp_{cam_id}")
+                new_dev_name = None
+                
+            updated_cameras.append({
+                "id": cam_id,
+                "name": cam_name,
+                "source_type": new_src_type,
+                "source": new_source,
+                "device_name": new_dev_name,
+                "enabled": cam_enabled
+            })
+            
+    st.session_state.current_ui_cameras = updated_cameras
+            
+    if updated_cameras and st.sidebar.button("💾 Save Camera Config", use_container_width=True):
+        with open(config_path, "w") as f:
+            json.dump({"cameras": updated_cameras}, f, indent=2)
+        if "multi_cam" in st.session_state and st.session_state.multi_cam is not None:
+            for cam_item in updated_cameras:
+                st.session_state.multi_cam.reconfigure_camera(
+                    cam_item["id"],
+                    cam_item["source"],
+                    source_type=cam_item["source_type"],
+                    name=cam_item["name"],
+                    device_name=cam_item.get("device_name"),
+                    enabled=cam_item["enabled"]
+                )
+        st.sidebar.success("Saved camera configuration!")
+        st.rerun()
+
+    st.sidebar.divider()
+    st.sidebar.header("🎯 Target & Model Selection")
+    detection_mode = st.sidebar.radio(
+        "Select Detection Mode:",
+        ["👤 Person Mode (Default)", "🗣️ Head Mode — Experimental"]
+    )
+    
+    tiled_mode = False
+    if detection_mode == "🗣️ Head Mode — Experimental":
+        st.sidebar.warning("⚠️ EXPERIMENTAL MODE ACTIVE\nUsing V4 Head Detector across all streams.\nNot for production safety monitoring.")
+        head_strategy = st.sidebar.selectbox(
+            "Inference Strategy:",
+            ["Full-Frame (640x640)", "2x2 Spatial Tiling"]
+        )
+        tiled_mode = (head_strategy == "2x2 Spatial Tiling")
+        
+    st.sidebar.divider()
+    st.sidebar.header("⚙️ Performance Settings")
+    detect_interval = st.sidebar.slider("Detection Interval (Frames)", 1, 10, 3)
+    device = st.sidebar.radio("Execution Device:", ["cpu", "cuda"], horizontal=True)
+    enable_alerts = st.sidebar.checkbox("Sync Firebase Alerts", value=False)
+    
+    st.sidebar.divider()
+    col_start, col_stop = st.sidebar.columns(2)
+    with col_start:
+        if st.button("▶️ Start Command Center", use_container_width=True):
             st.session_state.is_monitoring = True
     with col_stop:
         if st.button("⏹️ Stop", use_container_width=True):
@@ -573,7 +717,200 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     else:
         status_box.info("👉 Click **▶️ Start Monitoring** in the sidebar to run the live interactive pipeline.")
 
-# ========== MODE 2: REMOTE TELEMETRY STREAM ==========
+# ========== MODE 2: MULTI-CAMERA COMMAND CENTER ==========
+elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
+    from src.multi_camera_manager import MultiCameraManager
+
+    if st.session_state.is_monitoring:
+        st.subheader("🖥️ Multi-Camera CCTV Command Center Grid")
+        system_banner = st.empty()
+        
+        mode_key = "HEAD" if detection_mode == "🗣️ Head Mode — Experimental" else "PERSON"
+        if mode_key == "HEAD":
+            st.warning("⚠️ EXPERIMENTAL MODE — HEAD DETECTION ACTIVE across multi-camera streams.")
+            
+        multi_cam = MultiCameraManager(
+            detection_mode=mode_key,
+            device=device,
+            detect_interval=detect_interval,
+            tiled_mode=tiled_mode
+        )
+        st.session_state.multi_cam = multi_cam
+        
+        # Synchronize UI sidebar camera selections with MultiCameraManager before starting
+        ui_cams = st.session_state.get("current_ui_cameras", updated_cameras)
+        if ui_cams:
+            with open(config_path, "w") as f:
+                json.dump({"cameras": ui_cams}, f, indent=2)
+            for cam_item in ui_cams:
+                multi_cam.reconfigure_camera(
+                    cam_item["id"],
+                    cam_item["source"],
+                    source_type=cam_item["source_type"],
+                    name=cam_item["name"],
+                    device_name=cam_item.get("device_name"),
+                    enabled=cam_item["enabled"]
+                )
+        
+        online_count = multi_cam.start_all_cameras()
+        
+        # Temporary Runtime Debug Output (Requirement 3)
+        with st.expander("🔍 CCTV Grid Runtime Camera Diagnostics", expanded=True):
+            for cam in multi_cam.cameras.values():
+                dbg_info = cam.get_debug_info()
+                st.write(
+                    f"**{cam.id}** ({cam.name}) | "
+                    f"UI Source Type: `{cam.source_type}` | UI Source: `{cam.source}` | "
+                    f"Manager Source Type: `{dbg_info['configured_source_type']}` | Manager Source: `{dbg_info['configured_source']}` | "
+                    f"Capture Open: `{dbg_info['capture_opened']}` | Status: `{cam.status}`"
+                )
+        
+        if online_count == 0:
+            st.error("🔴 Error: No camera sources could be opened.")
+            st.session_state.is_monitoring = False
+        else:
+            metrics_logger = MetricsLogger()
+            alert_manager = None
+            if enable_alerts and fb_initialized:
+                try:
+                    alert_manager = FirebaseAlertManager()
+                except Exception:
+                    pass
+            
+            # Setup 2x2 grid layout
+            cam_list = list(multi_cam.cameras.values())
+            
+            row1_cams = cam_list[:2]
+            row2_cams = cam_list[2:4]
+            
+            grid_video_ph = {}
+            grid_metric_ph = {}
+            
+            # Row 1
+            col1, col2 = st.columns(2)
+            for i, cam in enumerate(row1_cams):
+                target_col = col1 if i == 0 else col2
+                with target_col:
+                    st.markdown(f"### 🎥 `{cam.id}`: {cam.name}")
+                    grid_video_ph[cam.id] = st.empty()
+                    grid_metric_ph[cam.id] = st.empty()
+                    
+            # Row 2
+            if row2_cams:
+                col3, col4 = st.columns(2)
+                for i, cam in enumerate(row2_cams):
+                    target_col = col3 if i == 0 else col4
+                    with target_col:
+                        st.markdown(f"### 🎥 `{cam.id}`: {cam.name}")
+                        grid_video_ph[cam.id] = st.empty()
+                        grid_metric_ph[cam.id] = st.empty()
+            
+            last_firebase_update = 0
+            
+            try:
+                while st.session_state.is_monitoring:
+                    frames_dict = multi_cam.step_all()
+                    if not frames_dict:
+                        st.warning("All camera streams completed or disconnected.")
+                        st.session_state.is_monitoring = False
+                        break
+                        
+                    # 1. Update overall risk banner
+                    sys_risk = multi_cam.get_overall_system_risk()
+                    overall_level = sys_risk["overall_risk_level"]
+                    highest_id = sys_risk["highest_risk_camera_id"]
+                    highest_name = sys_risk["highest_risk_camera_name"]
+                    highest_score = sys_risk["highest_risk_score"]
+                    active_cams = sys_risk["active_camera_count"]
+                    
+                    if overall_level == "HIGH":
+                        system_banner.error(f"🔴 **COMMAND CENTER OVERALL STATUS: HIGH RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
+                    elif overall_level == "MEDIUM":
+                        system_banner.warning(f"🟡 **COMMAND CENTER OVERALL STATUS: MEDIUM RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
+                    else:
+                        system_banner.success(f"🟢 **COMMAND CENTER OVERALL STATUS: NORMAL / LOW RISK** | Active CCTV Feeds: **{active_cams}**")
+                    
+                    # 2. Update per-camera display and telemetry across all cameras
+                    for cam_id, cam in multi_cam.cameras.items():
+                        if cam.source_type == "webcam":
+                            src_badge_str = f"📷 WEBCAM: {get_camera_display_name(cam.source, cam.device_name)}"
+                        elif cam.source_type == "rtsp":
+                            src_badge_str = "🌐 IP CAMERA (RTSP)"
+                        else:
+                            src_badge_str = "📁 RECORDED VIDEO"
+                        dbg_info = cam.get_debug_info()
+                        
+                        if cam.status == "ONLINE" and cam_id in frames_dict:
+                            frame_out = frames_dict[cam_id]
+                            
+                            # High-Speed Web JPEG Stream Compression
+                            display_frame = cv2.resize(frame_out, (640, 360))
+                            _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            grid_video_ph[cam_id].image(jpeg_buffer.tobytes(), use_container_width=True)
+                            
+                            risk_colors = {"LOW": "#00ff88", "MEDIUM": "#ffaa00", "HIGH": "#ff0000", "UNKNOWN": "#666"}
+                            badge_color = risk_colors.get(cam.risk_level, "#666")
+                            
+                            count_label = "Visible Heads" if mode_key == "HEAD" else "Tracked Persons"
+                            count_val = cam.visible_count if mode_key == "HEAD" else cam.active_count
+                            
+                            grid_metric_ph[cam_id].markdown(f"""
+                            <div style="background:#1a1a2e; padding:10px; border-radius:8px; border:2px solid {badge_color}; margin-bottom:15px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span style="color:{badge_color}; font-weight:bold; font-size:1.0em;">RISK: {cam.risk_level} ({cam.risk_score:.1f})</span>
+                                    <span style="color:#aaa; font-size:0.85em;">{src_badge_str} | FPS: {cam.fps:.1f}</span>
+                                </div>
+                                <div style="margin-top:5px; font-size:0.88em; color:#ddd;">
+                                    👥 {count_label}: <b>{count_val}</b> | 📊 Density: <b>{cam.max_density}</b> | 🏃 Speed: <b>{cam.avg_speed:.1f} px/f</b> ({cam.dominant_direction})
+                                </div>
+                                <div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #333; padding-top:3px;">
+                                    🔍 Active Src: <b>{dbg_info['active_source_type'].upper()}</b> ({dbg_info['active_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Log telemetry
+                            cam_payload = multi_cam.get_camera_telemetry_payload(cam_id)
+                            metrics_logger.log(cam_payload, cam.frame_count)
+                            
+                            if alert_manager and (time.time() - last_firebase_update > 1.0):
+                                alert_manager.update_camera_telemetry(cam_id, cam_payload)
+                                
+                        elif cam.status == "CONNECTION FAILED":
+                            grid_metric_ph[cam_id].markdown(f"""
+                            <div style="background:#2a1a1a; padding:10px; border-radius:8px; border:2px solid #ff4444; margin-bottom:15px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span style="color:#ff4444; font-weight:bold;">🔴 CONNECTION FAILED</span>
+                                    <span style="color:#aaa; font-size:0.85em;">{src_badge_str}</span>
+                                </div>
+                                <div style="margin-top:5px; font-size:0.88em; color:#ffaaaa;">
+                                    ⚠️ {cam.error_message or 'Unable to open camera stream.'}
+                                </div>
+                                <div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #442222; padding-top:3px;">
+                                    🔍 Configured: <b>{dbg_info['configured_source_type'].upper()}</b> ({dbg_info['configured_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                        elif cam.status == "DISABLED":
+                            grid_metric_ph[cam_id].markdown(f"""
+                            <div style="background:#1a1a1a; padding:10px; border-radius:8px; border:1px solid #555; margin-bottom:15px;">
+                                <span style="color:#888; font-weight:bold;">⚪ CAMERA DISABLED</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                    if alert_manager and (time.time() - last_firebase_update > 1.0):
+                        last_firebase_update = time.time()
+                        
+                    time.sleep(0.001)
+                    
+            finally:
+                multi_cam.stop_all_cameras()
+                st.info("⏹️ Command Center stopped cleanly.")
+    else:
+        st.info("👉 Click **▶️ Start Command Center** in the sidebar to initiate multi-camera monitoring grid.")
+
+# ========== MODE 3: REMOTE TELEMETRY STREAM ==========
 else:
     data, conn_status, is_stale, source_desc = fetch_telemetry_data()
     alerts = read_recent_alerts(5)

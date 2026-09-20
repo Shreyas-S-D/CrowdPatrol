@@ -361,6 +361,18 @@ class FirebaseAlertManager:
                 print(f"[!] Warning: Firebase RTDB write failure ({e}). Local execution continues.")
                 self._rtdb_warning_logged = True
 
+    def update_camera_telemetry(self, camera_id, metrics):
+        """
+        Pushes camera-namespaced telemetry snapshot (cameras/<camera_id>) to Firebase RTDB.
+        """
+        try:
+            cam_ref = self.rtdb.reference(f'cameras/{camera_id}')
+            cam_ref.update(metrics)
+        except Exception as e:
+            if not getattr(self, "_rtdb_cam_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB camera write failure ({e}). Local execution continues.")
+                self._rtdb_cam_warning_logged = True
+
     
     def store_event_log(self, event_type, details):
         try:

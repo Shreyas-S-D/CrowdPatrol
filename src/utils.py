@@ -17,10 +17,15 @@ class VideoProcessor:
         """
         if isinstance(source, int):
             return cv2.VideoCapture(source)
-        elif source.startswith("rtsp://"):
+        elif isinstance(source, str):
+            if source.isdigit():
+                return cv2.VideoCapture(int(source))
             return cv2.VideoCapture(source)
         else:
-            return cv2.VideoCapture(source)
+            try:
+                return cv2.VideoCapture(int(source))
+            except Exception:
+                return cv2.VideoCapture(str(source))
     
     @staticmethod
     def get_video_info(cap):
@@ -55,7 +60,7 @@ class MetricsLogger:
         with open(self.csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                "timestamp", "person_count", "max_density", 
+                "timestamp", "camera_id", "camera_name", "person_count", "max_density", 
                 "anomaly_score", "risk_level", "combined_score", "frame_number"
             ])
     
@@ -65,10 +70,12 @@ class MetricsLogger:
             writer = csv.writer(f)
             writer.writerow([
                 datetime.now().isoformat(),
+                metrics.get("camera_id", "CAM-00"),
+                metrics.get("camera_name", "Single Stream"),
                 metrics.get("person_count", 0),
-                metrics.get("density", 0),
-                metrics.get("anomaly", 0),
-                metrics.get("risk", "Low"),
+                metrics.get("density", metrics.get("max_density", 0)),
+                metrics.get("anomaly", metrics.get("anomaly_score", 0)),
+                metrics.get("risk", metrics.get("risk_level", "Low")),
                 metrics.get("combined_score", 0),
                 frame_number
             ])
