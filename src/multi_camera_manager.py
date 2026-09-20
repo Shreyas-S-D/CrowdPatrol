@@ -32,6 +32,7 @@ from src.experimental_head_density import HeadDensityEstimator
 from src.experimental_head_risk import ExperimentalHeadRiskAdapter
 from src.heatmap import generate_heatmap
 from src.utils import VideoProcessor, FrameAnnotator
+from src.alert_manager import AlertManager
 
 DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "cameras.json"
 
@@ -224,7 +225,7 @@ class MultiCameraManager:
     Central orchestration manager for multi-camera CCTV crowd monitoring feeds.
     Shares a single YOLO detector across all cameras while isolating per-camera state.
     """
-    def __init__(self, config_path=None, detection_mode="PERSON", device="cpu", detect_interval=3, tiled_mode=False):
+    def __init__(self, config_path=None, detection_mode="PERSON", device="cpu", detect_interval=3, tiled_mode=False, alert_manager=None):
         if config_path is None:
             config_path = DEFAULT_CONFIG_PATH
         self.config_path = Path(config_path)
@@ -232,6 +233,7 @@ class MultiCameraManager:
         self.device = device
         self.detect_interval = detect_interval
         self.tiled_mode = tiled_mode
+        self.alert_manager = alert_manager if alert_manager is not None else AlertManager()
         
         self.cameras = {}
         self.shared_detector = None
@@ -441,6 +443,12 @@ class MultiCameraManager:
         cam.fps = float(np.mean(cam.fps_deque))
         cam.last_update_time = datetime.now().isoformat()
         
+        # Process camera telemetry through AlertManager for discrete alert events
+        if self.alert_manager is not None:
+            telemetry = self.get_camera_telemetry_payload(camera_id)
+            if telemetry:
+                self.alert_manager.process_camera_telemetry(cam.id, cam.name, telemetry)
+        
         return cam.annotated_frame
 
     def step_all(self):
@@ -452,6 +460,18 @@ class MultiCameraManager:
                 if frame_out is not None:
                     processed[cam_id] = frame_out
         return processed
+
+    def get_active_alerts(self):
+        """Returns currently active alert events across all cameras."""
+        if self.alert_manager is not None:
+            return self.alert_manager.get_active_alerts()
+        return []
+
+    def get_alert_history(self, limit=50):
+        """Returns recent alert event history across all cameras."""
+        if self.alert_manager is not None:
+            return self.alert_manager.get_alert_history(limit=limit)
+        return []
 
     def get_overall_system_risk(self):
         """

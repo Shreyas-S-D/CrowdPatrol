@@ -724,6 +724,7 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     if st.session_state.is_monitoring:
         st.subheader("🖥️ Multi-Camera CCTV Command Center Grid")
         system_banner = st.empty()
+        alert_center_ph = st.empty()
         
         mode_key = "HEAD" if detection_mode == "🗣️ Head Mode — Experimental" else "PERSON"
         if mode_key == "HEAD":
@@ -774,6 +775,8 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
             if enable_alerts and fb_initialized:
                 try:
                     alert_manager = FirebaseAlertManager()
+                    if multi_cam.alert_manager:
+                        multi_cam.alert_manager.fb_manager = alert_manager
                 except Exception:
                     pass
             
@@ -829,6 +832,31 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                         system_banner.warning(f"🟡 **COMMAND CENTER OVERALL STATUS: MEDIUM RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
                     else:
                         system_banner.success(f"🟢 **COMMAND CENTER OVERALL STATUS: NORMAL / LOW RISK** | Active CCTV Feeds: **{active_cams}**")
+                    
+                    # 1b. Render Alert Center Panel
+                    active_alts = multi_cam.get_active_alerts()
+                    if active_alts:
+                        alt_htmls = []
+                        for alt in active_alts:
+                            b_col = "#ffaa00" if alt.risk_level == "MEDIUM" else "#ff0000"
+                            bg_col = "#2a2000" if alt.risk_level == "MEDIUM" else "#3a0000"
+                            badge_lbl = f"🟡 MEDIUM ({alt.risk_score:.1f})" if alt.risk_level == "MEDIUM" else f"🔴 HIGH ({alt.risk_score:.1f})"
+                            if alt.status == "ESCALATED":
+                                badge_lbl = f"🚨 ESCALATED HIGH ({alt.risk_score:.1f})"
+                            alt_htmls.append(f"""
+                            <div style="background:{bg_col}; border:1px solid {b_col}; padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:0.85em;">
+                                <b>{alt.camera_id}</b> ({alt.camera_name}) &nbsp;|&nbsp;
+                                <span style="color:{b_col}; font-weight:bold;">{badge_lbl}</span> &nbsp;|&nbsp;
+                                <span style="color:#eee;">Reason: {alt.reason}</span> &nbsp;|&nbsp;
+                                <span style="color:#aaa;">Status: {alt.status}</span>
+                            </div>
+                            """)
+                        alert_center_ph.markdown(
+                            f"**🚨 Active CCTV Alert Events ({len(active_alts)}):**\n" + "".join(alt_htmls),
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        alert_center_ph.markdown("🟢 *No Active Risk Alerts Across CCTV Streams*", unsafe_allow_html=True)
                     
                     # 2. Update per-camera display and telemetry across all cameras
                     for cam_id, cam in multi_cam.cameras.items():

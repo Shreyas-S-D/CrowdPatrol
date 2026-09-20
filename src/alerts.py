@@ -146,6 +146,37 @@ class FirebaseAlertManager:
         except Exception as e:
             print(f"[!] Failed to store alert: {e}")
             return None
+
+    def store_camera_alert(self, alert_data: dict):
+        """
+        Pushes namespaced camera alert payload to Firebase RTDB at alerts/<camera_id>/<alert_id>
+        and updates active alert reference at cameras/<camera_id>/current_alert.
+        """
+        try:
+            cam_id = alert_data.get("camera_id", "UNKNOWN")
+            alert_id = alert_data.get("alert_id", f"alt_{int(time.time())}")
+            
+            # Store at alerts/<camera_id>/<alert_id>
+            alert_ref = self.rtdb.reference(f'alerts/{cam_id}/{alert_id}')
+            alert_ref.set(alert_data)
+            
+            # Update active camera alert snapshot
+            cam_alert_ref = self.rtdb.reference(f'cameras/{cam_id}/current_alert')
+            cam_alert_ref.update({
+                "alert_id": alert_id,
+                "risk_level": alert_data.get("risk_level", "LOW"),
+                "risk_score": alert_data.get("risk_score", 0.0),
+                "reason": alert_data.get("reason", ""),
+                "status": alert_data.get("status", "ACTIVE"),
+                "timestamp": alert_data.get("timestamp", datetime.now().isoformat())
+            })
+            print(f"[✓] Camera alert stored in Firebase: {cam_id} - {alert_data.get('risk_level')} ({alert_id})")
+            return alert_id
+        except Exception as e:
+            if not getattr(self, "_rtdb_cam_alert_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB camera alert write failure ({e}). Local execution continues.")
+                self._rtdb_cam_alert_warning_logged = True
+            return None
     
     def store_metrics_batch(self, metrics_history):
         """
