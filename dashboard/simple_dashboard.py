@@ -125,10 +125,29 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
         video_source = st.sidebar.text_input("Enter Path or URL:", "data/videos/youtube_crowd_test.mp4")
     
     st.sidebar.divider()
+    st.sidebar.header("🎯 Target & Model Selection")
+    detection_mode = st.sidebar.radio(
+        "Select Detection Mode:",
+        ["👤 Person Mode (Default)", "🗣️ Head Mode — Experimental"]
+    )
+    
+    tiled_mode = False
+    if detection_mode == "🗣️ Head Mode — Experimental":
+        st.sidebar.warning("⚠️ EXPERIMENTAL MODE ACTIVE\nUsing V4 Head Detector (crowdpatrol_yolov8n_head_v4.pt).\nNot for production safety monitoring.")
+        head_strategy = st.sidebar.selectbox(
+            "Inference Strategy:",
+            ["Full-Frame (640x640)", "2x2 Spatial Tiling"]
+        )
+        tiled_mode = (head_strategy == "2x2 Spatial Tiling")
+        model_type = "models/crowdpatrol_yolov8n_head_v4.pt" if os.path.exists("models/crowdpatrol_yolov8n_head_v4.pt") else "models/crowdpatrol_yolov8n_finetuned_v2.pt"
+    else:
+        model_choice = st.sidebar.selectbox("YOLOv8 Model Weight:", ["models/crowdpatrol_yolov8n_finetuned_v2.pt", "yolov8n.pt", "yolov8s.pt"])
+        model_type = model_choice
+
+    st.sidebar.divider()
     st.sidebar.header("⚙️ Performance Settings")
-    model_choice = st.sidebar.selectbox("YOLOv8 Model Weight:", ["models/crowdpatrol_yolov8n_finetuned_v2.pt", "yolov8n.pt", "yolov8s.pt"])
-    model_type = model_choice
-    confidence = st.sidebar.slider("Confidence Threshold", 0.10, 1.00, 0.35, 0.05)
+    default_conf = 0.25 if detection_mode == "🗣️ Head Mode — Experimental" else 0.35
+    confidence = st.sidebar.slider("Confidence Threshold", 0.10, 1.00, default_conf, 0.05)
     detect_interval = st.sidebar.slider("Detection Interval (Frames)", 1, 10, 3)
     res_choice = st.sidebar.selectbox("Web Preview Resolution:", ["854x480 (Recommended)", "640x360 (Ultra Fast)", "1280x720 (Full HD)"])
     if "640x360" in res_choice:
@@ -240,18 +259,36 @@ def read_recent_alerts(limit=5):
 # ========== MODE 1: INTERACTIVE WEB PIPELINE EXECUTION ==========
 if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     if st.session_state.is_monitoring:
-        status_box.info(f"⏳ Initializing CrowdPatrol Core Modules... Source: `{video_source}`")
+        if detection_mode == "🗣️ Head Mode — Experimental":
+            st.warning("⚠️ EXPERIMENTAL MODE — HEAD DETECTION ACTIVE. Using V4 Head Detector (crowdpatrol_yolov8n_head_v4.pt). Not for production safety monitoring.")
+            
+        status_box.info(f"⏳ Initializing CrowdPatrol Core Modules... Source: `{video_source}` | Mode: `{detection_mode}`")
         
         cap = VideoProcessor.get_video_source(video_source)
         if not cap.isOpened():
             status_box.error(f"🔴 Error: Unable to open video source `{video_source}`.")
             st.session_state.is_monitoring = False
         else:
-            detector = PersonDetector(model_path=model_type, confidence=confidence, device=device)
-            tracker = PersonTracker(max_age=30)
-            density_estimator = DensityEstimator(grid_size=(4, 4))
-            motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4))
-            risk_assessor = RiskAssessor()
+            if detection_mode == "🗣️ Head Mode — Experimental":
+                from src.experimental_head_mode import ExperimentalHeadDetector, DEFAULT_HEAD_MODEL_PATH
+                from src.experimental_head_density import HeadDensityEstimator
+                from src.experimental_head_risk import ExperimentalHeadRiskAdapter
+                
+                head_model_path = "models/crowdpatrol_yolov8n_head_v4.pt" if os.path.exists("models/crowdpatrol_yolov8n_head_v4.pt") else DEFAULT_HEAD_MODEL_PATH
+                detector = ExperimentalHeadDetector(model_path=head_model_path, confidence=confidence, device=device)
+                tracker = PersonTracker(max_age=30)
+                density_estimator = HeadDensityEstimator(grid_size=(4, 4))
+                motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4))
+                risk_adapter = ExperimentalHeadRiskAdapter()
+                risk_assessor = None
+            else:
+                detector = PersonDetector(model_path=model_type, confidence=confidence, device=device)
+                tracker = PersonTracker(max_age=30)
+                density_estimator = DensityEstimator(grid_size=(4, 4))
+                motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4))
+                risk_assessor = RiskAssessor()
+                risk_adapter = None
+                
             metrics_logger = MetricsLogger()
             
             alert_manager = None
@@ -277,57 +314,120 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     
                     frame_count += 1
                     
-                    # Detection & DeepSORT tracking
-                    if frame_count == 1 or (frame_count % detect_interval == 0):
-                        detections = detector.detect(frame)
-                        current_tracks = tracker.update(detections, frame)
+                    if detection_mode == "🗣️ Head Mode — Experimental":
+                        # Detection & DeepSORT head tracking
+                        if frame_count == 1 or (frame_count % detect_interval == 0):
+                            detections = detector.detect(frame, tiled=tiled_mode)
+                            current_tracks = tracker.update(detections, frame)
+                        else:
+                            current_tracks = tracker.predict()
+                        
+                        visible_tracks = tracker.get_visible_tracks()
+                        visible_heads = len(visible_tracks) if len(visible_tracks) > 0 else len(detections)
+                        active_head_tracks = len(current_tracks)
+                        
+                        # Optical flow crowd motion analysis
+                        grid_matrix, motion_summary = motion_analyzer.analyze_frame(frame)
+                        
+                        # Head-center 4x4 density & experimental risk calculation (using visible heads)
+                        density_map, max_density, summary_stats = density_estimator.calculate_density(visible_tracks, frame.shape)
+                        anomaly_score = motion_summary.get("anomaly_score", 0.0)
+                        
+                        risk_info = risk_adapter.calculate_experimental_head_risk(
+                            total_heads=active_head_tracks,
+                            max_head_cell=max_density,
+                            frame_idx=frame_count,
+                            anomaly_score=anomaly_score,
+                            visible_heads=visible_heads
+                        )
+                        
+                        risk_level_str = risk_info["risk_level"]
+                        combined_score = risk_info["smoothed_score"]
+                        person_count = active_head_tracks
+                        avg_speed = motion_summary.get("avg_speed", 0.0)
+                        dominant_dir = motion_summary.get("dominant_direction", "STATIONARY")
+                        cam_motion = motion_summary.get("camera_motion_detected", False)
+                        data_quality_score = 1.0
+                        growth_rate = 0.0
+                        raw_risk_score = risk_info.get("raw_score", combined_score)
+                        
+                        # Thermal heatmap background layer (from visible heads)
+                        heatmap_base, _ = generate_heatmap(frame, visible_tracks, draw_grid=False)
+                        
+                        # Head Mode HUD Annotations (drawing visible tracks only)
+                        annotated_frame = FrameAnnotator.create_head_dashboard_frame(
+                            heatmap_base,
+                            {
+                                "visible_heads": visible_heads,
+                                "person_count": active_head_tracks,
+                                "density": max_density,
+                                "anomaly": anomaly_score,
+                                "avg_speed": avg_speed,
+                                "dominant_direction": dominant_dir,
+                                "risk": risk_level_str,
+                                "combined_score": combined_score
+                            },
+                            density_map,
+                            grid_size=(4, 4),
+                            grid_matrix=grid_matrix,
+                            tracks=visible_tracks
+                        )
                     else:
-                        current_tracks = tracker.predict()
-                    
-                    # Optical flow crowd motion analysis
-                    grid_matrix, motion_summary = motion_analyzer.analyze_frame(frame)
-                    
-                    # Density & risk calculation
-                    density_map, max_density = density_estimator.calculate_density(current_tracks, frame.shape)
-                    anomaly_score = risk_assessor.calculate_movement_anomaly(current_tracks, frame.shape)
-                    
-                    risk_res = risk_assessor.assess_frame(
-                        max_density=max_density,
-                        motion_summary=motion_summary,
-                        tracks=current_tracks,
-                        timestamp=time.time(),
-                        anomaly_score=anomaly_score
-                    )
-                    
-                    risk_level_str = risk_res["risk"]
-                    combined_score = risk_res["combined_score"]
-                    person_count = len(current_tracks)
-                    avg_speed = motion_summary.get("avg_speed", 0.0)
-                    dominant_dir = motion_summary.get("dominant_direction", "STATIONARY")
-                    cam_motion = motion_summary.get("camera_motion_detected", False)
-                    data_quality_score = risk_res.get("data_quality_score", 1.0)
-                    growth_rate = risk_res.get("growth_rate", 0.0)
-                    
-                    # Thermal heatmap background layer
-                    heatmap_base, _ = generate_heatmap(frame, current_tracks, draw_grid=False)
-                    
-                    # Annotations & Visualization Overlay
-                    annotated_frame = FrameAnnotator.create_dashboard_frame(
-                        heatmap_base,
-                        {
-                            "person_count": person_count,
-                            "density": max_density,
-                            "anomaly": anomaly_score,
-                            "avg_speed": avg_speed,
-                            "dominant_direction": dominant_dir,
-                            "risk": risk_level_str,
-                            "combined_score": combined_score
-                        },
-                        density_map,
-                        grid_size=(4, 4),
-                        grid_matrix=grid_matrix,
-                        tracks=current_tracks
-                    )
+                        # Detection & DeepSORT person tracking
+                        if frame_count == 1 or (frame_count % detect_interval == 0):
+                            detections = detector.detect(frame)
+                            current_tracks = tracker.update(detections, frame)
+                        else:
+                            current_tracks = tracker.predict()
+                        
+                        visible_heads = 0
+                        active_head_tracks = 0
+                        
+                        # Optical flow crowd motion analysis
+                        grid_matrix, motion_summary = motion_analyzer.analyze_frame(frame)
+                        
+                        # Density & risk calculation
+                        density_map, max_density = density_estimator.calculate_density(current_tracks, frame.shape)
+                        anomaly_score = risk_assessor.calculate_movement_anomaly(current_tracks, frame.shape)
+                        
+                        risk_res = risk_assessor.assess_frame(
+                            max_density=max_density,
+                            motion_summary=motion_summary,
+                            tracks=current_tracks,
+                            timestamp=time.time(),
+                            anomaly_score=anomaly_score
+                        )
+                        
+                        risk_level_str = risk_res["risk"]
+                        combined_score = risk_res["combined_score"]
+                        person_count = len(current_tracks)
+                        avg_speed = motion_summary.get("avg_speed", 0.0)
+                        dominant_dir = motion_summary.get("dominant_direction", "STATIONARY")
+                        cam_motion = motion_summary.get("camera_motion_detected", False)
+                        data_quality_score = risk_res.get("data_quality_score", 1.0)
+                        growth_rate = risk_res.get("growth_rate", 0.0)
+                        raw_risk_score = risk_res.get("raw_score", combined_score)
+                        
+                        # Thermal heatmap background layer
+                        heatmap_base, _ = generate_heatmap(frame, current_tracks, draw_grid=False)
+                        
+                        # Standard Person Mode Annotations
+                        annotated_frame = FrameAnnotator.create_dashboard_frame(
+                            heatmap_base,
+                            {
+                                "person_count": person_count,
+                                "density": max_density,
+                                "anomaly": anomaly_score,
+                                "avg_speed": avg_speed,
+                                "dominant_direction": dominant_dir,
+                                "risk": risk_level_str,
+                                "combined_score": combined_score
+                            },
+                            density_map,
+                            grid_size=(4, 4),
+                            grid_matrix=grid_matrix,
+                            tracks=current_tracks
+                        )
                     
                     t_end = time.perf_counter()
                     frame_ms = (t_end - t_start) * 1000.0
@@ -340,27 +440,57 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                     
                     # Log to CSV
-                    metrics_payload = {
-                        "person_count": person_count,
-                        "density": max_density,
-                        "max_density": max_density,
-                        "anomaly": anomaly_score,
-                        "anomaly_score": anomaly_score,
-                        "risk": risk_level_str,
-                        "risk_level": risk_level_str,
-                        "combined_score": combined_score,
-                        "raw_score": risk_res["raw_score"],
-                        "smoothed_score": risk_res["smoothed_score"],
-                        "data_quality_score": data_quality_score,
-                        "growth_rate": growth_rate,
-                        "avg_speed": avg_speed,
-                        "max_speed": motion_summary.get("max_speed", 0.0),
-                        "dominant_direction": dominant_dir,
-                        "camera_motion_detected": cam_motion,
-                        "sudden_movement_count": motion_summary.get("sudden_movement_count", 0),
-                        "fps": avg_fps,
-                        "last_frame_time": datetime.now().isoformat()
-                    }
+                    if detection_mode == "🗣️ Head Mode — Experimental":
+                        metrics_payload = {
+                            "mode": "HEAD_EXPERIMENTAL",
+                            "visible_heads": visible_heads,
+                            "active_head_tracks": active_head_tracks,
+                            "max_head_density": max_density,
+                            "head_risk_level": risk_level_str,
+                            "head_smoothed_score": combined_score,
+                            "head_raw_score": raw_risk_score,
+                            "person_count": 0,
+                            "density": max_density,
+                            "max_density": max_density,
+                            "anomaly": anomaly_score,
+                            "anomaly_score": anomaly_score,
+                            "risk": risk_level_str,
+                            "risk_level": risk_level_str,
+                            "combined_score": combined_score,
+                            "raw_score": raw_risk_score,
+                            "smoothed_score": combined_score,
+                            "data_quality_score": 1.0,
+                            "growth_rate": 0.0,
+                            "avg_speed": avg_speed,
+                            "max_speed": motion_summary.get("max_speed", 0.0),
+                            "dominant_direction": dominant_dir,
+                            "camera_motion_detected": cam_motion,
+                            "sudden_movement_count": 0,
+                            "fps": avg_fps,
+                            "last_frame_time": datetime.now().isoformat()
+                        }
+                    else:
+                        metrics_payload = {
+                            "person_count": person_count,
+                            "density": max_density,
+                            "max_density": max_density,
+                            "anomaly": anomaly_score,
+                            "anomaly_score": anomaly_score,
+                            "risk": risk_level_str,
+                            "risk_level": risk_level_str,
+                            "combined_score": combined_score,
+                            "raw_score": raw_risk_score,
+                            "smoothed_score": risk_res.get("smoothed_score", combined_score),
+                            "data_quality_score": data_quality_score,
+                            "growth_rate": growth_rate,
+                            "avg_speed": avg_speed,
+                            "max_speed": motion_summary.get("max_speed", 0.0),
+                            "dominant_direction": dominant_dir,
+                            "camera_motion_detected": cam_motion,
+                            "sudden_movement_count": motion_summary.get("sudden_movement_count", 0),
+                            "fps": avg_fps,
+                            "last_frame_time": datetime.now().isoformat()
+                        }
                     metrics_logger.log(metrics_payload, frame_count)
                     
                     if alert_manager and (time.time() - last_firebase_update > 1.0):
@@ -382,27 +512,36 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     # Render Live Metrics Widgets (Throttled to every 2 frames for smooth web playback)
                     if frame_count % 2 == 0:
                         cam_text = "🎥 Camera Pan Active (Motion Excluded)" if cam_motion else "📷 Static Camera"
-                        if risk_level_str == "High":
-                            status_box.error(f"🔴 HIGH RISK! Score: {combined_score:.1f} | Influx: {growth_rate:.1f} p/s | {cam_text}")
-                        elif risk_level_str == "Medium":
-                            status_box.warning(f"🟡 Medium Risk - Score: {combined_score:.1f} | Speed: {avg_speed:.1f} px/f | {cam_text}")
+                        if detection_mode == "🗣️ Head Mode — Experimental":
+                            status_box.warning(f"🗣️ EXPERIMENTAL HEAD RISK: {risk_level_str} | Score: {combined_score:.1f} | Visible Heads: {visible_heads} | Active Tracks: {active_head_tracks} | {cam_text}")
                         else:
-                            status_box.success(f"🟢 Normal - Score: {combined_score:.1f} | Speed: {avg_speed:.1f} px/f | Heading: {dominant_dir} | {cam_text}")
+                            if risk_level_str == "High":
+                                status_box.error(f"🔴 HIGH RISK! Score: {combined_score:.1f} | Influx: {growth_rate:.1f} p/s | {cam_text}")
+                            elif risk_level_str == "Medium":
+                                status_box.warning(f"🟡 Medium Risk - Score: {combined_score:.1f} | Speed: {avg_speed:.1f} px/f | {cam_text}")
+                            else:
+                                status_box.success(f"🟢 Normal - Score: {combined_score:.1f} | Speed: {avg_speed:.1f} px/f | Heading: {dominant_dir} | {cam_text}")
                         
-                        risk_colors = {"Low": "#00ff88", "Medium": "#ffaa00", "High": "#ff0000"}
+                        risk_colors = {"Low": "#00ff88", "LOW": "#00ff88", "Medium": "#ffaa00", "MEDIUM": "#ffaa00", "High": "#ff0000", "HIGH": "#ff0000"}
                         color = risk_colors.get(risk_level_str, "#666")
                         
+                        card_title = "EXPERIMENTAL HEAD RISK PROXY" if detection_mode == "🗣️ Head Mode — Experimental" else risk_level_str.upper()
                         risk_placeholder.markdown(f"""
                         <div style="background:#1a1a2e; padding:15px; border-radius:10px; 
                                     text-align:center; border:3px solid {color}; margin-bottom:10px;">
-                            <h3 style="color:{color}; margin:0;">{risk_level_str.upper()}</h3>
+                            <h3 style="color:{color}; margin:0;">{card_title}</h3>
                             <h1 style="color:{color}; margin:5px 0;">{combined_score:.1f}</h1>
-                            <p style="margin:0; font-size:0.9em;">Influx: {growth_rate:.1f} p/s | Speed: {avg_speed:.1f} px/f ({dominant_dir})</p>
+                            <p style="margin:0; font-size:0.9em;">Speed: {avg_speed:.1f} px/f ({dominant_dir})</p>
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        person_metric.metric("👥 Tracked Persons", person_count)
-                        density_metric.metric("📊 Max Density", f"{max_density} p/cell")
+                        if detection_mode == "🗣️ Head Mode — Experimental":
+                            person_metric.metric("🗣️ Visible Heads", visible_heads, delta=f"{active_head_tracks} active tracks", delta_color="off")
+                            density_metric.metric("📊 Max Head Density", f"{max_density} heads/cell")
+                        else:
+                            person_metric.metric("👥 Tracked Persons", person_count)
+                            density_metric.metric("📊 Max Density", f"{max_density} p/cell")
+                            
                         speed_metric.metric("🏃 Avg Speed", f"{avg_speed:.1f} px/f ({dominant_dir})")
                         anomaly_metric.metric("⚠️ Anomaly Score", f"{anomaly_score:.2f}")
                         quality_bar.progress(min(max(0.0, data_quality_score), 1.0), text=f"Data Quality ({data_quality_score*100:.0f}%)")
@@ -416,9 +555,10 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         })
                         risk_chart.line_chart(df1.set_index("Time"), height=200)
                         
+                        count_chart_label = "Heads" if detection_mode == "🗣️ Head Mode — Experimental" else "Persons"
                         df2 = pd.DataFrame({
                             "Time": list(st.session_state.time_history),
-                            "Persons": list(st.session_state.person_history),
+                            count_chart_label: list(st.session_state.person_history),
                             "Max Density": list(st.session_state.density_history)
                         })
                         person_chart.line_chart(df2.set_index("Time"), height=200)

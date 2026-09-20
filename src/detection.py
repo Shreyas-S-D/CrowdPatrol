@@ -10,6 +10,7 @@ class PersonDetector:
     def __init__(self, model_path=None, confidence=0.5, device="cpu"):
         if model_path is None:
             model_path = DEFAULT_MODEL_PATH
+        self.model_path = model_path
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.device = device

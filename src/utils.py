@@ -255,6 +255,102 @@ class FrameAnnotator:
         
         return frame
 
+    @staticmethod
+    def draw_head_tracks(frame, tracks):
+        """Draw cyan bounding boxes and DeepSORT head track IDs for tracked heads"""
+        for track in tracks:
+            if len(track) >= 5:
+                x1, y1, x2, y2, track_id = track[:5]
+            else:
+                continue
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            
+            # Draw cyan bounding box (BGR: 255, 255, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
+            
+            # Draw track ID badge
+            label = f"head#{track_id}"
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            cv2.rectangle(frame, (x1, max(0, y1 - 18)), (x1 + lw + 4, max(18, y1)), (255, 255, 0), -1)
+            cv2.putText(frame, label, (x1 + 2, max(14, y1 - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        return frame
+
+    @staticmethod
+    def draw_head_density_zones(frame, density_map, grid_size=(4, 4)):
+        """Draw yellow grid lines and head density numbers on zones"""
+        h, w = frame.shape[:2]
+        cell_h, cell_w = max(1, h // grid_size[0]), max(1, w // grid_size[1])
+        
+        for i in range(grid_size[0]):
+            for j in range(grid_size[1]):
+                x1, y1 = j * cell_w, i * cell_h
+                x2, y2 = (j + 1) * cell_w, (i + 1) * cell_h
+                
+                # Grid lines (yellow: BGR 0, 255, 255)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 1)
+                
+                # Density count
+                count = density_map[i, j]
+                if count > 0:
+                    text = f"H:{count}"
+                    text_pos = (x1 + 10, y1 + 25)
+                    cv2.putText(frame, text, text_pos,
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        return frame
+
+    @staticmethod
+    def create_head_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4), grid_matrix=None, tracks=None):
+        """Create head mode dashboard view with cyan boxes and experimental HUD"""
+        frame = frame.copy()
+        h, w = frame.shape[:2]
+        
+        # 1. Cyan Bounding Boxes & DeepSORT Head Track IDs
+        if tracks is not None and len(tracks) > 0:
+            frame = FrameAnnotator.draw_head_tracks(frame, tracks)
+            
+        # 2. Yellow Grid & Head Counts
+        frame = FrameAnnotator.draw_head_density_zones(frame, density_map, grid_size)
+        
+        # 3. Optical Flow Grid if available
+        if grid_matrix is not None:
+            frame = FrameAnnotator.draw_optical_flow_grid(frame, grid_matrix, grid_size)
+            
+        # 4. Top Banner
+        banner_height = 40
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w, banner_height), (0, 100, 150), -1)
+        frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
+        
+        risk_str = str(metrics.get('risk', 'LOW')).upper()
+        score_val = metrics.get('combined_score', 0.0)
+        banner_text = f"HEAD MODE -- EXPERIMENTAL | RISK: {risk_str} | SCORE: {score_val:.1f}"
+        cv2.putText(frame, banner_text, (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        # 5. Info panel (right side)
+        panel_x = max(0, w - 220)
+        cv2.rectangle(frame, (panel_x, banner_height), (w, h), (0, 0, 0, 140), -1)
+        
+        y = banner_height + 25
+        info_items = [
+            ("Visible Heads", metrics.get("visible_heads", 0)),
+            ("Active Tracks", metrics.get("person_count", 0)),
+            ("Max Head Dens", metrics.get("density", 0)),
+            ("Anomaly", f"{metrics.get('anomaly', 0):.2f}"),
+            ("Avg Speed", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
+            ("Heading", str(metrics.get("dominant_direction", "STATIC"))),
+            ("Head Risk", f"{score_val:.1f}"),
+        ]
+        
+        for label, value in info_items:
+            cv2.putText(frame, f"{label}:", (panel_x + 10, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+            cv2.putText(frame, str(value), (panel_x + 120, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            y += 24
+            
+        return frame
+
 
 class ConfigLoader:
     """Load and validate configuration"""
