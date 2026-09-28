@@ -145,20 +145,20 @@ def test_independent_camera_capture_state():
 def test_reconfigure_video_to_webcam_switch():
     """Verify dynamic reconfiguration from video to webcam source type."""
     manager = MultiCameraManager(device="cpu")
-    cam1 = manager.cameras["CAM-01"]
+    cam4 = manager.cameras["CAM-04"]
     manager.start_all_cameras()
     
-    assert cam1.source_type == "video"
-    assert cam1.status == "ONLINE"
+    assert cam4.source_type == "video"
+    assert cam4.status == "ONLINE"
     
-    # Reconfigure CAM-01 to webcam index 0 (disabled to avoid physical hardware dependency in test)
-    res = manager.reconfigure_camera("CAM-01", 0, source_type="webcam", enabled=False)
+    # Reconfigure CAM-04 to webcam index 0 (disabled to avoid physical hardware dependency in test)
+    res = manager.reconfigure_camera("CAM-04", 0, source_type="webcam", enabled=False)
     
     assert res is False
-    assert cam1.source_type == "webcam"
-    assert cam1.source == 0
-    assert cam1.status == "DISABLED"
-    assert cam1.cap is None
+    assert cam4.source_type == "webcam"
+    assert cam4.source == 0
+    assert cam4.status == "DISABLED"
+    assert cam4.cap is None
     manager.stop_all_cameras()
 
 
@@ -292,6 +292,13 @@ def test_one_failed_camera_does_not_stop_other_cameras():
     manager.cameras["CAM-01"].source = 9999
     
     # Other cameras are valid recorded videos
+    manager.cameras["CAM-02"].source_type = "video"
+    manager.cameras["CAM-02"].source = "data/videos/dense_crowd_test.mp4"
+    manager.cameras["CAM-03"].source_type = "video"
+    manager.cameras["CAM-03"].source = "data/videos/real_crowd_video_1.mp4"
+    manager.cameras["CAM-04"].source_type = "video"
+    manager.cameras["CAM-04"].source = "data/videos/real_crowd_video_2.mp4"
+    
     success_count = manager.start_all_cameras()
     
     assert manager.cameras["CAM-01"].status == "CONNECTION FAILED"
@@ -377,7 +384,7 @@ def test_camera_telemetry_payload_schema():
     assert payload["camera_id"] == "CAM-01"
     assert payload["camera_name"] == "Main Sidewalk / Entrance"
     assert payload["status"] == "ONLINE"
-    assert payload["source_type"] == "video"
+    assert payload["source_type"] == cam1.source_type
     assert payload["person_count"] == 12
     assert payload["max_density"] == 4
     assert payload["risk_level"] == "MEDIUM"
@@ -512,5 +519,69 @@ def test_multicamera_manager_receives_runtime_webcam_config():
     assert cam1.source_type == "webcam"
     assert cam1.source == 0
     assert cam1.status == "DISABLED"
+
+
+def test_upload_video_source_configuration(tmp_path):
+    """Verify uploaded video source file path config opens cleanly in CameraState."""
+    dummy_video = tmp_path / "upload_CAM-01_test_sample.mp4"
+    # Copy existing test video to simulate uploaded video path
+    src_video = Path("data/videos/youtube_crowd_test.mp4")
+    if src_video.exists():
+        dummy_video.write_bytes(src_video.read_bytes())
+    else:
+        dummy_video.write_bytes(b"dummy video content")
+        
+    cam = CameraState("CAM-01", "Uploaded Video Feed", str(dummy_video), source_type="video")
+    assert cam.source_type == "video"
+    assert cam.source == str(dummy_video)
+    if src_video.exists():
+        assert cam.open_source() is True
+        assert cam.status == "ONLINE"
+        cam.close_source()
+
+
+def test_per_camera_upload_isolation():
+    """Verify independent cameras maintain separate uploaded video source paths."""
+    cam1 = CameraState("CAM-01", "Cam 1 Upload", "data/videos/temp/upload_CAM-01_feed.mp4", source_type="video")
+    cam2 = CameraState("CAM-02", "Cam 2 Upload", "data/videos/temp/upload_CAM-02_feed.mp4", source_type="video")
+    
+    assert cam1.source != cam2.source
+    assert "upload_CAM-01" in str(cam1.source)
+    assert "upload_CAM-02" in str(cam2.source)
+
+
+def test_invalid_uploaded_video_handling():
+    """Verify invalid/missing uploaded video path fails gracefully with CONNECTION FAILED."""
+    cam = CameraState("CAM-01", "Missing Upload", "data/videos/temp/upload_CAM-01_nonexistent.mp4", source_type="video")
+    assert cam.open_source() is False
+    assert cam.status == "CONNECTION FAILED"
+    assert "Video file not found" in cam.error_message
+
+
+def test_mixed_stream_configuration_with_upload(tmp_path):
+    """Verify MultiCameraManager handles 4-camera grid with mixed Upload, Preset, Webcam, and RTSP sources."""
+    upload_file = tmp_path / "upload_CAM-02_test.mp4"
+    upload_file.write_bytes(b"dummy video bytes")
+    
+    config_data = {
+        "cameras": [
+            {"id": "CAM-01", "name": "Preset Feed", "source_type": "video", "source": "data/videos/youtube_crowd_test.mp4", "enabled": False},
+            {"id": "CAM-02", "name": "Uploaded Feed", "source_type": "video", "source": str(upload_file), "enabled": False},
+            {"id": "CAM-03", "name": "Webcam Feed", "source_type": "webcam", "source": 0, "enabled": False},
+            {"id": "CAM-04", "name": "RTSP Feed", "source_type": "rtsp", "source": "rtsp://192.168.1.100:554/live", "enabled": False}
+        ]
+    }
+    
+    config_file = tmp_path / "cameras.json"
+    with open(config_file, "w") as f:
+        json.dump(config_data, f)
+        
+    manager = MultiCameraManager(config_path=config_file, device="cpu")
+    assert len(manager.cameras) == 4
+    assert manager.cameras["CAM-01"].source == "data/videos/youtube_crowd_test.mp4"
+    assert manager.cameras["CAM-02"].source == str(upload_file)
+    assert manager.cameras["CAM-03"].source == 0
+    assert manager.cameras["CAM-04"].source == "rtsp://192.168.1.100:554/live"
+
 
 

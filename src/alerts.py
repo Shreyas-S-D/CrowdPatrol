@@ -103,7 +103,7 @@ class FirebaseAlertManager:
             return True
         return (datetime.now() - self.last_notification_time).total_seconds() > self.notification_cooldown
     
-    def store_alert(self, risk_level, density, anomaly_score, person_count, combined_score, growth_rate=0.0, data_quality_score=1.0):
+    def store_alert(self, risk_level, density, anomaly_score, person_count, combined_score, growth_rate=0.0, data_quality_score=1.0, primary_risk_zone="A1", primary_zone_density=0):
         if not self.can_send_alert():
             return None
         
@@ -116,6 +116,8 @@ class FirebaseAlertManager:
             "timestamp_unix": int(timestamp.timestamp()),
             "risk_level": str(risk_level),
             "density": int(density),                          # ← int()
+            "primary_risk_zone": str(primary_risk_zone),
+            "primary_zone_density": int(primary_zone_density),
             "anomaly_score": float(round(anomaly_score, 3)),  # ← float()
             "person_count": int(person_count),                 # ← int()
             "combined_score": float(round(combined_score, 1)), # ← float()
@@ -135,6 +137,8 @@ class FirebaseAlertManager:
                 "risk_level": str(risk_level),
                 "person_count": int(person_count),
                 "max_density": int(density),
+                "primary_risk_zone": str(primary_risk_zone),
+                "primary_zone_density": int(primary_zone_density),
                 "last_updated": timestamp.isoformat(),
                 "last_alert_id": new_alert_ref.key
             })
@@ -166,6 +170,8 @@ class FirebaseAlertManager:
                 "alert_id": alert_id,
                 "risk_level": alert_data.get("risk_level", "LOW"),
                 "risk_score": alert_data.get("risk_score", 0.0),
+                "primary_risk_zone": alert_data.get("primary_risk_zone", "A1"),
+                "primary_zone_density": alert_data.get("primary_zone_density", 0),
                 "reason": alert_data.get("reason", ""),
                 "status": alert_data.get("status", "ACTIVE"),
                 "timestamp": alert_data.get("timestamp", datetime.now().isoformat())

@@ -1,0 +1,16 @@
+{
+  "base_model": "yolov8n.pt",
+  "dataset": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\training\\yolo\\dataset.yaml",
+  "imgsz": 480,
+  "epochs": 3,
+  "batch_size": 16,
+  "fraction": 0.35,
+  "optimizer": "auto",
+  "learning_rate": 0.01,
+  "device": "cpu",
+  "cuda_available": false,
+  "seed": 42,
+  "target_model": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_finetuned_v2.pt",
+  "training_time_sec": 1297.71,
+  "final_model_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_finetuned_v2.pt"
+}

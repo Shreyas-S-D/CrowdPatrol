@@ -1,0 +1,183 @@
+{
+  "methodology": {
+    "detector_fps_benchmark": "Raw frame-by-frame detector loop in Python at native 640 imgsz on real video frames using time.perf_counter()",
+    "pipeline_fps_benchmark": "End-to-end CrowdPatrol pipeline (YOLO + DeepSORT + 4x4 Grid + Optical Flow + Risk Engine) across 150 frames per video",
+    "val_reported_fps_note": "The previously reported 56.4 FPS in evaluate.py came from PyTorch val() speed dictionary where V2 evaluated at imgsz=480 during model.val(). Standalone detector FPS on raw 1280x720 video frames at imgsz=640 is directly benchmarked below."
+  },
+  "video_evaluations": [
+    {
+      "video_id": "video1",
+      "video_name": "Bengaluru Real Crowd Video 1 (Sidewalk Pedestrian Flow)",
+      "video_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\videos\\real_crowd_video_1.mp4",
+      "stock_yolov8n": {
+        "detector": {
+          "frames_evaluated": 150,
+          "avg_detector_fps": 34.8,
+          "min_detector_fps": 0.7,
+          "max_detector_fps": 39.5,
+          "avg_detections_per_frame": 12.6,
+          "max_detections_single_frame": 18,
+          "frames_gte_100": 0,
+          "frames_hit_300_ceiling": 0
+        },
+        "pipeline": {
+          "frames_evaluated": 150,
+          "avg_pipeline_fps": 10.5,
+          "min_pipeline_fps": 2.7,
+          "max_pipeline_fps": 87.6,
+          "avg_active_deepsort_tracks": 20.5,
+          "max_active_deepsort_tracks": 28
+        },
+        "obvious_false_positives": "Low / Clean",
+        "tracking_stability": "High"
+      },
+      "finetuned_v2": {
+        "detector": {
+          "frames_evaluated": 150,
+          "avg_detector_fps": 50.6,
+          "min_detector_fps": 9.3,
+          "max_detector_fps": 59.6,
+          "avg_detections_per_frame": 10.8,
+          "max_detections_single_frame": 16,
+          "frames_gte_100": 0,
+          "frames_hit_300_ceiling": 0
+        },
+        "pipeline": {
+          "frames_evaluated": 150,
+          "avg_pipeline_fps": 11.7,
+          "min_pipeline_fps": 3.3,
+          "max_pipeline_fps": 87.2,
+          "avg_active_deepsort_tracks": 18.5,
+          "max_active_deepsort_tracks": 25
+        },
+        "obvious_false_positives": "Low / Clean",
+        "tracking_stability": "High"
+      },
+      "comparison_summary": {
+        "detector_fps_delta": 15.8,
+        "pipeline_fps_delta": 1.2,
+        "avg_dets_delta": -1.8,
+        "avg_tracks_delta": -2.0,
+        "v1_failure_reproduced": false
+      }
+    },
+    {
+      "video_id": "video2",
+      "video_name": "Bengaluru Real Crowd Video 2 (High-Density Street Crossing)",
+      "video_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\videos\\real_crowd_video_2.mp4",
+      "stock_yolov8n": {
+        "detector": {
+          "frames_evaluated": 150,
+          "avg_detector_fps": 35.1,
+          "min_detector_fps": 8.8,
+          "max_detector_fps": 40.0,
+          "avg_detections_per_frame": 12.6,
+          "max_detections_single_frame": 16,
+          "frames_gte_100": 0,
+          "frames_hit_300_ceiling": 0
+        },
+        "pipeline": {
+          "frames_evaluated": 150,
+          "avg_pipeline_fps": 11.2,
+          "min_pipeline_fps": 2.9,
+          "max_pipeline_fps": 86.0,
+          "avg_active_deepsort_tracks": 22.4,
+          "max_active_deepsort_tracks": 29
+        },
+        "obvious_false_positives": "Low / Clean",
+        "tracking_stability": "High"
+      },
+      "finetuned_v2": {
+        "detector": {
+          "frames_evaluated": 150,
+          "avg_detector_fps": 50.6,
+          "min_detector_fps": 12.9,
+          "max_detector_fps": 59.7,
+          "avg_detections_per_frame": 12.9,
+          "max_detections_single_frame": 19,
+          "frames_gte_100": 0,
+          "frames_hit_300_ceiling": 0
+        },
+        "pipeline": {
+          "frames_evaluated": 150,
+          "avg_pipeline_fps": 11.1,
+          "min_pipeline_fps": 2.3,
+          "max_pipeline_fps": 87.6,
+          "avg_active_deepsort_tracks": 22.3,
+          "max_active_deepsort_tracks": 29
+        },
+        "obvious_false_positives": "Low / Clean",
+        "tracking_stability": "High"
+      },
+      "comparison_summary": {
+        "detector_fps_delta": 15.5,
+        "pipeline_fps_delta": -0.1,
+        "avg_dets_delta": 0.3,
+        "avg_tracks_delta": -0.1,
+        "v1_failure_reproduced": false
+      }
+    },
+    {
+      "video_id": "video3",
+      "video_name": "Bengaluru Real Crowd Video 3 (Commercial Street Entrance)",
+      "video_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\videos\\real_crowd_video_3.mp4",
+      "stock_yolov8n": {
+        "detector": {
+          "frames_evaluated": 150,
+          "avg_detector_fps": 35.4,
+          "min_detector_fps": 9.8,
+          "max_detector_fps": 39.6,
+          "avg_detections_per_frame": 11.4,
+          "max_detections_single_frame": 17,
+          "frames_gte_100": 0,
+          "frames_hit_300_ceiling": 0
+        },
+        "pipeline": {
+          "frames_evaluated": 150,
+          "avg_pipeline_fps": 9.9,
+          "min_pipeline_fps": 2.4,
+          "max_pipeline_fps": 86.9,
+          "avg_active_deepsort_tracks": 28.6,
+          "max_active_deepsort_tracks": 41
+        },
+        "obvious_false_positives": "Low / Clean",
+        "tracking_stability": "High"
+      },
+      "finetuned_v2": {
+        "detector": {
+          "frames_evaluated": 150,
+          "avg_detector_fps": 52.3,
+          "min_detector_fps": 8.5,
+          "max_detector_fps": 59.1,
+          "avg_detections_per_frame": 9.3,
+          "max_detections_single_frame": 14,
+          "frames_gte_100": 0,
+          "frames_hit_300_ceiling": 0
+        },
+        "pipeline": {
+          "frames_evaluated": 150,
+          "avg_pipeline_fps": 12.1,
+          "min_pipeline_fps": 3.4,
+          "max_pipeline_fps": 87.6,
+          "avg_active_deepsort_tracks": 21.0,
+          "max_active_deepsort_tracks": 36
+        },
+        "obvious_false_positives": "Low / Clean",
+        "tracking_stability": "High"
+      },
+      "comparison_summary": {
+        "detector_fps_delta": 16.9,
+        "pipeline_fps_delta": 2.2,
+        "avg_dets_delta": -2.1,
+        "avg_tracks_delta": -7.6,
+        "v1_failure_reproduced": false
+      }
+    }
+  ],
+  "final_decision": {
+    "conclusion_code": "A",
+    "conclusion_text": "V2 is ready to replace stock YOLO for the demo",
+    "conclusion_reason": "V2 fine-tuned model improves person detection recall/mAP on real human crowds (+13.06% mAP@50) while maintaining high real-time pipeline FPS and zero false-positive ceiling artifacts on real videos.",
+    "v1_failure_reproduced": false
+  }
+}

@@ -1,20 +1,94 @@
 """
-CrowdPatrol Phase 14 — Alert System Management Module.
+CrowdPatrol Phase 14 & 15 — Alert System Management Module.
 Provides modular, per-camera isolated alert state tracking, transition logic,
-telemetry-driven reason extraction, local CSV/JSON logging, and optional Firebase synchronization.
+telemetry-driven reason extraction, local CSV/JSON logging, operator acknowledgement,
+emergency alarm sound triggers, and optional Firebase synchronization.
 """
 
 import os
 import csv
 import json
 import time
+import numpy as np
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
 LOGS_DIR = BASE_DIR / "logs"
+
+
+def extract_spatial_risk_info(density_map: Any) -> Dict[str, Any]:
+    """
+    Analyzes a 4x4 density grid matrix to identify the primary risk zone (cell with max density),
+    its density value, human-readable description, and any tied secondary zones.
+    
+    Grid layout (4x4):
+        Rows:    A (top), B (upper-middle), C (lower-middle), D (bottom)
+        Columns: 1 (left), 2 (left-center), 3 (right-center), 4 (right)
+    """
+    ROW_LETTERS = ['A', 'B', 'C', 'D']
+    ROW_LABELS = {'A': 'Top', 'B': 'Upper', 'C': 'Lower', 'D': 'Bottom'}
+    COL_LABELS = {'1': 'Left', '2': 'Left-Center', '3': 'Right-Center', '4': 'Right'}
+
+    def format_description(cell_id: str) -> str:
+        row_char = cell_id[0]
+        col_char = cell_id[1]
+        r_desc = ROW_LABELS.get(row_char, "Unknown")
+        c_desc = COL_LABELS.get(col_char, "Unknown")
+        if "-" in c_desc:
+            return f"{r_desc}/{c_desc}"
+        return f"{r_desc}-{c_desc}"
+
+    if density_map is None:
+        return {
+            "primary_risk_zone": "A1",
+            "primary_zone_density": 0,
+            "zone_description": "Top-Left",
+            "secondary_zones": []
+        }
+
+    try:
+        grid = np.array(density_map)
+        if grid.shape != (4, 4):
+            return {
+                "primary_risk_zone": "A1",
+                "primary_zone_density": 0,
+                "zone_description": "Top-Left",
+                "secondary_zones": []
+            }
+    except Exception:
+        return {
+            "primary_risk_zone": "A1",
+            "primary_zone_density": 0,
+            "zone_description": "Top-Left",
+            "secondary_zones": []
+        }
+
+    max_val = -1
+    best_cell = "A1"
+    tied_cells = []
+
+    for r in range(4):
+        for c in range(4):
+            val = int(grid[r, c])
+            cell_id = f"{ROW_LETTERS[r]}{c + 1}"
+            if val > max_val:
+                max_val = val
+                best_cell = cell_id
+                tied_cells = [cell_id]
+            elif val == max_val and max_val > 0:
+                tied_cells.append(cell_id)
+
+    secondary = [cell for cell in tied_cells if cell != best_cell]
+
+    return {
+        "primary_risk_zone": best_cell,
+        "primary_zone_density": max(0, max_val),
+        "zone_description": format_description(best_cell),
+        "secondary_zones": secondary
+    }
 
 
 @dataclass
@@ -29,6 +103,13 @@ class AlertEvent:
     reason: str              # Derived human-readable reason
     status: str              # "ACTIVE", "ESCALATED", "RESOLVED", "ACKNOWLEDGED"
     details: Dict[str, Any] = field(default_factory=dict)
+    acknowledged: bool = False
+    acknowledged_at: Optional[str] = None
+    acknowledged_by: Optional[str] = None
+    alarm_played: bool = False
+    primary_risk_zone: str = "A1"
+    primary_zone_density: int = 0
+    zone_description: str = "Top-Left"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -89,6 +170,15 @@ class CameraAlertTracker:
         self.last_alert_time: Optional[float] = None
         self.alert_counter: int = 0
 
+    def acknowledge_alert(self, operator_id: str = "Operator") -> bool:
+        """Marks the active alert as acknowledged without resolving underlying camera risk."""
+        if self.active_alert is not None and not self.active_alert.acknowledged:
+            self.active_alert.acknowledged = True
+            self.active_alert.acknowledged_at = datetime.now().isoformat()
+            self.active_alert.acknowledged_by = operator_id
+            return True
+        return False
+
     def process_telemetry(self, telemetry: Dict[str, Any]) -> Tuple[Optional[AlertEvent], Optional[AlertEvent]]:
         """
         Evaluates frame telemetry snapshot and updates alert state.
@@ -104,6 +194,15 @@ class CameraAlertTracker:
         curr_time = time.time()
         timestamp_str = telemetry.get("last_frame_time") or datetime.now().isoformat()
         
+        spatial_info = extract_spatial_risk_info(telemetry.get("density_map"))
+        pz = str(telemetry.get("primary_risk_zone", spatial_info["primary_risk_zone"]))
+        pzd = int(telemetry.get("primary_zone_density", spatial_info["primary_zone_density"]))
+        zd = str(telemetry.get("zone_description", spatial_info["zone_description"]))
+        
+        telemetry["primary_risk_zone"] = pz
+        telemetry["primary_zone_density"] = pzd
+        telemetry["zone_description"] = zd
+
         triggered_alert: Optional[AlertEvent] = None
         resolved_alert: Optional[AlertEvent] = None
         
@@ -131,7 +230,12 @@ class CameraAlertTracker:
                 risk_score=risk_score,
                 reason=reason,
                 status="ESCALATED",
-                details=dict(telemetry)
+                details=dict(telemetry),
+                acknowledged=False,
+                alarm_played=False,
+                primary_risk_zone=pz,
+                primary_zone_density=pzd,
+                zone_description=zd
             )
             self.active_alert = triggered_alert
             self.last_alert_time = curr_time
@@ -153,7 +257,12 @@ class CameraAlertTracker:
                 risk_score=risk_score,
                 reason=reason,
                 status="ACTIVE",
-                details=dict(telemetry)
+                details=dict(telemetry),
+                acknowledged=False,
+                alarm_played=False,
+                primary_risk_zone=pz,
+                primary_zone_density=pzd,
+                zone_description=zd
             )
             self.active_alert = triggered_alert
             self.last_alert_time = curr_time
@@ -178,7 +287,12 @@ class CameraAlertTracker:
                     risk_score=risk_score,
                     reason=reason,
                     status="ACTIVE",
-                    details=dict(telemetry)
+                    details=dict(telemetry),
+                    acknowledged=False,
+                    alarm_played=False,
+                    primary_risk_zone=pz,
+                    primary_zone_density=pzd,
+                    zone_description=zd
                 )
                 self.active_alert = triggered_alert
                 self.last_alert_time = curr_time
@@ -187,6 +301,9 @@ class CameraAlertTracker:
                 # Within cooldown: update active alert metrics without creating a new event
                 if self.active_alert is not None:
                     self.active_alert.risk_score = risk_score
+                    self.active_alert.primary_risk_zone = pz
+                    self.active_alert.primary_zone_density = pzd
+                    self.active_alert.zone_description = zd
                     self.active_alert.details = dict(telemetry)
                 return None, None
 
@@ -196,6 +313,9 @@ class CameraAlertTracker:
             if self.active_alert is not None:
                 self.active_alert.risk_level = "MEDIUM"
                 self.active_alert.risk_score = risk_score
+                self.active_alert.primary_risk_zone = pz
+                self.active_alert.primary_zone_density = pzd
+                self.active_alert.zone_description = zd
                 self.active_alert.details = dict(telemetry)
             return None, None
 
@@ -208,6 +328,7 @@ class AlertManager:
     Central Alert Management service for CrowdPatrol multi-camera monitoring.
     Features:
     - Independent camera state tracking (CAM-01, CAM-02, etc.)
+    - Operator acknowledgement & Emergency alarm triggers
     - Local fallback persistence (CSV / JSON logging under logs/alerts.csv)
     - Optional Firebase RTDB integration
     - Event listener dispatch system
@@ -241,7 +362,9 @@ class AlertManager:
                     writer = csv.writer(f)
                     writer.writerow([
                         "alert_id", "camera_id", "camera_name", "timestamp",
-                        "risk_level", "risk_score", "reason", "status"
+                        "risk_level", "risk_score", "reason", "status",
+                        "primary_risk_zone", "primary_zone_density",
+                        "acknowledged", "acknowledged_by"
                     ])
         except Exception as e:
             print(f"[!] AlertManager CSV init warning: {e}")
@@ -250,6 +373,20 @@ class AlertManager:
         """Register callback listener invoked whenever an alert is created/updated."""
         if listener not in self.event_listeners:
             self.event_listeners.append(listener)
+
+    def acknowledge_alert(self, camera_id: str, operator_id: str = "Operator") -> bool:
+        """
+        Acknowledges active alert for a specific camera ID.
+        Stops local alarm indication without resolving underlying risk level.
+        """
+        tracker = self.camera_trackers.get(camera_id)
+        if tracker:
+            ok = tracker.acknowledge_alert(operator_id=operator_id)
+            if ok and tracker.active_alert:
+                self._sync_to_firebase(tracker.active_alert)
+                self._notify_listeners(tracker.active_alert)
+            return ok
+        return False
 
     def process_camera_telemetry(self, camera_id: str, camera_name: str, telemetry: Dict[str, Any]) -> Optional[AlertEvent]:
         """
@@ -302,7 +439,11 @@ class AlertManager:
                     alert.risk_level,
                     f"{alert.risk_score:.2f}",
                     alert.reason,
-                    alert.status
+                    alert.status,
+                    alert.primary_risk_zone,
+                    alert.primary_zone_density,
+                    alert.acknowledged,
+                    alert.acknowledged_by or ""
                 ])
         except Exception as e:
             print(f"[!] Local alert CSV write failure: {e}")
@@ -337,6 +478,25 @@ class AlertManager:
     def get_active_alerts(self) -> List[AlertEvent]:
         """Returns list of currently active or escalated alerts across all cameras."""
         return list(self.active_alerts.values())
+
+    def get_unacknowledged_high_alerts(self) -> List[AlertEvent]:
+        """Returns list of active HIGH / ESCALATED risk alerts that have NOT been acknowledged."""
+        return [
+            alt for alt in self.active_alerts.values()
+            if alt.risk_level == "HIGH" and not alt.acknowledged
+        ]
+
+    def get_pending_alarm_alerts(self) -> List[AlertEvent]:
+        """
+        Returns list of active HIGH / ESCALATED risk alerts needing sound alarm trigger.
+        Marks returned alerts with alarm_played = True so sound plays only once per HIGH event.
+        """
+        pending = []
+        for alt in self.active_alerts.values():
+            if alt.risk_level == "HIGH" and not alt.acknowledged and not alt.alarm_played:
+                alt.alarm_played = True
+                pending.append(alt)
+        return pending
 
     def get_alert_history(self, limit: int = 50) -> List[AlertEvent]:
         """Returns recent alert history across all cameras."""

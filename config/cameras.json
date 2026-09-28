@@ -1,0 +1,36 @@
+{
+  "cameras": [
+    {
+      "id": "CAM-01",
+      "name": "Main Sidewalk / Entrance",
+      "source_type": "video",
+      "source": "data\\videos\\temp\\upload_CAM-01_temple 1.mp4",
+      "device_name": null,
+      "enabled": true
+    },
+    {
+      "id": "CAM-02",
+      "name": "Overhead Dense Zone",
+      "source_type": "video",
+      "source": "data\\videos\\temp\\upload_CAM-02_temple 2.mp4",
+      "device_name": null,
+      "enabled": true
+    },
+    {
+      "id": "CAM-03",
+      "name": "Street Crossing Plaza",
+      "source_type": "video",
+      "source": "data\\videos\\temp\\upload_CAM-03_temple 3.mp4",
+      "device_name": null,
+      "enabled": true
+    },
+    {
+      "id": "CAM-04",
+      "name": "Perimeter Gate",
+      "source_type": "video",
+      "source": "data\\videos\\temp\\upload_CAM-04_temple 4.mp4",
+      "device_name": null,
+      "enabled": true
+    }
+  ]
+}

@@ -32,7 +32,7 @@ from src.experimental_head_density import HeadDensityEstimator
 from src.experimental_head_risk import ExperimentalHeadRiskAdapter
 from src.heatmap import generate_heatmap
 from src.utils import VideoProcessor, FrameAnnotator
-from src.alert_manager import AlertManager
+from src.alert_manager import AlertManager, extract_spatial_risk_info
 
 DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "cameras.json"
 
@@ -467,6 +467,24 @@ class MultiCameraManager:
             return self.alert_manager.get_active_alerts()
         return []
 
+    def get_unacknowledged_high_alerts(self):
+        """Returns active HIGH risk alerts that have not been acknowledged."""
+        if self.alert_manager is not None:
+            return self.alert_manager.get_unacknowledged_high_alerts()
+        return []
+
+    def get_pending_alarm_alerts(self):
+        """Returns active HIGH risk alerts needing sound alarm trigger."""
+        if self.alert_manager is not None:
+            return self.alert_manager.get_pending_alarm_alerts()
+        return []
+
+    def acknowledge_alert(self, camera_id, operator_id="Operator"):
+        """Marks active alert for camera_id as acknowledged."""
+        if self.alert_manager is not None:
+            return self.alert_manager.acknowledge_alert(camera_id, operator_id=operator_id)
+        return False
+
     def get_alert_history(self, limit=50):
         """Returns recent alert event history across all cameras."""
         if self.alert_manager is not None:
@@ -514,6 +532,8 @@ class MultiCameraManager:
         if cam is None:
             return None
             
+        spatial_info = extract_spatial_risk_info(cam.density_map)
+
         return {
             "camera_id": cam.id,
             "camera_name": cam.name,
@@ -525,6 +545,11 @@ class MultiCameraManager:
             "visible_heads": cam.visible_count if self.detection_mode == "HEAD" else 0,
             "person_count": cam.active_count,
             "max_density": cam.max_density,
+            "primary_risk_zone": spatial_info["primary_risk_zone"],
+            "primary_zone_density": spatial_info["primary_zone_density"],
+            "zone_description": spatial_info["zone_description"],
+            "secondary_zones": spatial_info["secondary_zones"],
+            "density_map": cam.density_map.tolist() if hasattr(cam.density_map, "tolist") else cam.density_map,
             "risk_level": cam.risk_level,
             "risk_score": cam.risk_score,
             "combined_score": cam.risk_score,

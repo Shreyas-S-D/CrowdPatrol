@@ -1,0 +1,222 @@
+{
+  "dense_crowd": {
+    "v2": {
+      "total_frames_evaluated": 300,
+      "avg_detections_per_frame": 1.8666666666666667,
+      "median_detections_per_frame": 1.0,
+      "max_detections_per_frame": 11,
+      "min_detections_per_frame": 0,
+      "zero_detection_frames": 108,
+      "zero_detection_pct": 36.0,
+      "avg_confidence": 0.4229255286710603,
+      "median_confidence": 0.40175236761569977,
+      "detector_fps_avg": 29.21024665074244,
+      "detector_fps_min": 0.8083260166355141,
+      "detector_fps_max": 44.29443395963779
+    },
+    "v3": {
+      "total_frames_evaluated": 300,
+      "avg_detections_per_frame": 0.88,
+      "median_detections_per_frame": 0.0,
+      "max_detections_per_frame": 8,
+      "min_detections_per_frame": 0,
+      "zero_detection_frames": 196,
+      "zero_detection_pct": 65.33333333333333,
+      "avg_confidence": 0.43636076389388606,
+      "median_confidence": 0.4115034490823746,
+      "detector_fps_avg": 32.74664909816219,
+      "detector_fps_min": 15.9949583888987,
+      "detector_fps_max": 44.07888357481342
+    }
+  },
+  "normal_crowds": {
+    "youtube_crowd": {
+      "name": "YouTube Crowd Test Video",
+      "v2": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 12.83,
+        "median_detections_per_frame": 13.0,
+        "max_detections_per_frame": 19,
+        "min_detections_per_frame": 8,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.7249371419404507,
+        "median_confidence": 0.7847787737846375,
+        "detector_fps_avg": 32.51018484488981,
+        "detector_fps_min": 15.048071063574673,
+        "detector_fps_max": 41.53462118321027
+      },
+      "v3": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 13.22,
+        "median_detections_per_frame": 13.0,
+        "max_detections_per_frame": 18,
+        "min_detections_per_frame": 8,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.7339582381092775,
+        "median_confidence": 0.8037964701652527,
+        "detector_fps_avg": 32.7577737881397,
+        "detector_fps_min": 14.521248943990154,
+        "detector_fps_max": 43.204755979287285
+      }
+    },
+    "real_video_1": {
+      "name": "Bengaluru Real Crowd Video 1 (Sidewalk Flow)",
+      "v2": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 12.723333333333333,
+        "median_detections_per_frame": 13.0,
+        "max_detections_per_frame": 18,
+        "min_detections_per_frame": 8,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.724865327073168,
+        "median_confidence": 0.7858511209487915,
+        "detector_fps_avg": 31.308041848324784,
+        "detector_fps_min": 12.733532994807307,
+        "detector_fps_max": 42.20335263729249
+      },
+      "v3": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 12.99,
+        "median_detections_per_frame": 13.0,
+        "max_detections_per_frame": 18,
+        "min_detections_per_frame": 8,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.7363523336474884,
+        "median_confidence": 0.8014307618141174,
+        "detector_fps_avg": 32.3584581985562,
+        "detector_fps_min": 14.35585288114856,
+        "detector_fps_max": 42.756055323407665
+      }
+    },
+    "real_video_2": {
+      "name": "Bengaluru Real Crowd Video 2 (Street Crossing)",
+      "v2": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 13.506666666666666,
+        "median_detections_per_frame": 14.0,
+        "max_detections_per_frame": 21,
+        "min_detections_per_frame": 5,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.7067708695290825,
+        "median_confidence": 0.7382802069187164,
+        "detector_fps_avg": 31.332256638515606,
+        "detector_fps_min": 13.944278662876497,
+        "detector_fps_max": 41.35324354121619
+      },
+      "v3": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 13.77,
+        "median_detections_per_frame": 14.0,
+        "max_detections_per_frame": 21,
+        "min_detections_per_frame": 6,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.6987952113483409,
+        "median_confidence": 0.7222726941108704,
+        "detector_fps_avg": 31.476312390931472,
+        "detector_fps_min": 13.496405907456394,
+        "detector_fps_max": 43.21371776263255
+      }
+    },
+    "real_video_3": {
+      "name": "Bengaluru Real Crowd Video 3 (Commercial Entrance)",
+      "v2": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 11.9,
+        "median_detections_per_frame": 12.0,
+        "max_detections_per_frame": 19,
+        "min_detections_per_frame": 2,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.6604138159451365,
+        "median_confidence": 0.6768897175788879,
+        "detector_fps_avg": 31.50449660519336,
+        "detector_fps_min": 11.263468292231813,
+        "detector_fps_max": 42.47023897421256
+      },
+      "v3": {
+        "total_frames_evaluated": 300,
+        "avg_detections_per_frame": 12.426666666666666,
+        "median_detections_per_frame": 13.0,
+        "max_detections_per_frame": 18,
+        "min_detections_per_frame": 4,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.6706920630366505,
+        "median_confidence": 0.7047008574008942,
+        "detector_fps_avg": 31.7710660012718,
+        "detector_fps_min": 13.285682020337505,
+        "detector_fps_max": 41.67621746756309
+      }
+    }
+  },
+  "deepsort": {
+    "dense_crowd": {
+      "v2": {
+        "avg_tracks_per_frame": 5.216666666666667,
+        "max_active_tracks": 29,
+        "deepsort_fps_avg": 17.73921666280662
+      },
+      "v3": {
+        "avg_tracks_per_frame": 1.12,
+        "max_active_tracks": 14,
+        "deepsort_fps_avg": 35.20600158113421
+      }
+    },
+    "normal_crowd_youtube": {
+      "v2": {
+        "avg_tracks_per_frame": 18.836666666666666,
+        "max_active_tracks": 25,
+        "deepsort_fps_avg": 4.190525622184145
+      },
+      "v3": {
+        "avg_tracks_per_frame": 19.156666666666666,
+        "max_active_tracks": 26,
+        "deepsort_fps_avg": 4.221227877911698
+      }
+    }
+  },
+  "full_pipeline": {
+    "dense_crowd": {
+      "v2": {
+        "avg_person_detections": 1.9366666666666668,
+        "avg_tracked_persons": 5.216666666666667,
+        "max_tracked_persons": 29,
+        "max_grid_density": 9,
+        "avg_risk_score": 6.878733333333333,
+        "full_pipeline_fps": 13.998938693793738
+      },
+      "v3": {
+        "avg_person_detections": 0.3933333333333333,
+        "avg_tracked_persons": 1.12,
+        "max_tracked_persons": 14,
+        "max_grid_density": 4,
+        "avg_risk_score": 3.548433333333333,
+        "full_pipeline_fps": 23.345157681541057
+      }
+    },
+    "normal_crowd_youtube": {
+      "v2": {
+        "avg_person_detections": 11.733333333333333,
+        "avg_tracked_persons": 18.836666666666666,
+        "max_tracked_persons": 25,
+        "max_grid_density": 9,
+        "avg_risk_score": 26.056133333333335,
+        "full_pipeline_fps": 3.9227684818257433
+      },
+      "v3": {
+        "avg_person_detections": 11.85,
+        "avg_tracked_persons": 19.156666666666666,
+        "max_tracked_persons": 26,
+        "max_grid_density": 9,
+        "avg_risk_score": 25.639966666666666,
+        "full_pipeline_fps": 3.9294778753821413
+      }
+    }
+  }
+}

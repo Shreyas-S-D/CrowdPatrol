@@ -25,6 +25,7 @@ from src.motion_analysis import CrowdMotionAnalyzer
 from src.risk_assessment import RiskAssessor
 from src.heatmap import generate_heatmap
 from src.alerts import FirebaseAlertManager
+from src.alert_manager import AlertManager, AlertEvent, extract_spatial_risk_info
 from src.utils import VideoProcessor, MetricsLogger, FrameAnnotator
 from src.camera_devices import discover_camera_devices, test_camera_source, get_camera_display_name
 
@@ -100,8 +101,8 @@ confidence = 0.35
 detect_interval = 3
 device = "cpu"
 enable_alerts = False
-jpeg_quality = 80
-preview_resolution = (854, 480)
+jpeg_quality = 95
+preview_resolution = (1280, 720)
 
 if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     input_type = st.sidebar.selectbox(
@@ -173,16 +174,30 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     default_conf = 0.25 if detection_mode == "🗣️ Head Mode — Experimental" else 0.35
     confidence = st.sidebar.slider("Confidence Threshold", 0.10, 1.00, default_conf, 0.05)
     detect_interval = st.sidebar.slider("Detection Interval (Frames)", 1, 10, 3)
-    res_choice = st.sidebar.selectbox("Web Preview Resolution:", ["854x480 (Recommended)", "640x360 (Ultra Fast)", "1280x720 (Full HD)"])
+    res_choice = st.sidebar.selectbox("Web Preview Resolution:", ["1280x720 (Native Full HD)", "854x480 (Medium)", "640x360 (Ultra Fast)"])
     if "640x360" in res_choice:
         preview_resolution = (640, 360)
-    elif "1280x720" in res_choice:
-        preview_resolution = (1280, 720)
-    else:
+    elif "854x480" in res_choice:
         preview_resolution = (854, 480)
+    else:
+        preview_resolution = (1280, 720)
         
     device = st.sidebar.radio("Execution Device:", ["cpu", "cuda"], horizontal=True)
     enable_alerts = st.sidebar.checkbox("Sync Firebase Alerts", value=False)
+    
+    if "direct_alert_manager" not in st.session_state:
+        st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True)
+    direct_alert_mgr = st.session_state.direct_alert_manager
+    
+    enable_sound_alarm = st.sidebar.checkbox("🔔 Enable Emergency Alarm Sound", value=True, key="direct_sound_alarm")
+    
+    active_direct_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
+    if active_direct_alt is not None and not active_direct_alt.acknowledged:
+        st.sidebar.warning(f"🚨 ACTIVE EMERGENCY: {active_direct_alt.risk_level} ({active_direct_alt.risk_score:.1f})")
+        if st.sidebar.button("🔔 ACKNOWLEDGE ALERT (DIRECT-01)", key="ack_btn_direct_01", use_container_width=True):
+            direct_alert_mgr.acknowledge_alert("DIRECT-01", operator_id="DirectStreamOperator")
+            st.sidebar.success("Alert Acknowledged for DIRECT-01!")
+            st.rerun()
     
     st.sidebar.divider()
     col_start, col_stop = st.sidebar.columns(2)
@@ -212,16 +227,90 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
             cam_enabled = st.checkbox("Enable Camera Feed", value=cam_item.get("enabled", True), key=f"en_{cam_id}")
             cam_name = st.text_input("Camera Name", value=cam_item.get("name", cam_id), key=f"name_{cam_id}")
             
-            src_type_options = ["📁 Recorded Video", "📷 Webcam", "🌐 IP Camera / RTSP"]
+            src_type_options = ["📁 Preset Recorded Video", "📤 Upload Video", "📷 Webcam", "🌐 IP Camera / RTSP"]
             curr_type = cam_item.get("source_type", "video")
-            type_idx = 0 if curr_type == "video" else (1 if curr_type == "webcam" else 2)
+            curr_src_str = str(cam_item.get("source", ""))
+            
+            if curr_type == "video":
+                if curr_src_str.startswith("data/videos/temp/upload_"):
+                    type_idx = 1
+                else:
+                    type_idx = 0
+            elif curr_type == "webcam":
+                type_idx = 2
+            else:
+                type_idx = 3
             
             sel_type_str = st.selectbox("Source Type", src_type_options, index=type_idx, key=f"stype_{cam_id}")
             
-            if "Recorded Video" in sel_type_str:
+            if "Preset Recorded Video" in sel_type_str or ("Recorded Video" in sel_type_str and "Upload" not in sel_type_str):
                 new_src_type = "video"
-                new_source = st.text_input("Video File Path", value=str(cam_item.get("source", "data/videos/youtube_crowd_test.mp4")), key=f"src_vid_{cam_id}")
+                preset_video_map = {
+                    "CAM-01": "data/videos/youtube_crowd_test.mp4",
+                    "CAM-02": "data/videos/dense_crowd_test.mp4",
+                    "CAM-03": "data/videos/real_crowd_video_1.mp4",
+                    "CAM-04": "data/videos/real_crowd_video_2.mp4"
+                }
+                if curr_src_str.isdigit() or not curr_src_str or curr_src_str.startswith("data/videos/temp/upload_"):
+                    default_vid_path = preset_video_map.get(cam_id, "data/videos/youtube_crowd_test.mp4")
+                else:
+                    default_vid_path = curr_src_str
+                    
+                preset_list = [
+                    "data/videos/youtube_crowd_test.mp4",
+                    "data/videos/dense_crowd_test.mp4",
+                    "data/videos/real_crowd_video_1.mp4",
+                    "data/videos/real_crowd_video_2.mp4"
+                ]
+                
+                if default_vid_path in preset_list:
+                    preset_idx = preset_list.index(default_vid_path)
+                else:
+                    preset_idx = 0
+                    
+                sel_preset = st.selectbox(
+                    f"🎬 Recorded Video Preset ({cam_id})",
+                    preset_list + ["Custom File Path / URL..."],
+                    index=preset_idx,
+                    key=f"src_preset_{cam_id}"
+                )
+                if sel_preset == "Custom File Path / URL...":
+                    new_source = st.text_input("Video File Path", value=default_vid_path, key=f"src_vid_{cam_id}")
+                else:
+                    new_source = sel_preset
                 new_dev_name = None
+            elif "Upload Video" in sel_type_str:
+                new_src_type = "video"
+                uploaded_file = st.file_uploader(
+                    f"Upload Video File ({cam_id})",
+                    type=["mp4", "avi", "mov", "mkv", "webm"],
+                    key=f"src_upload_{cam_id}"
+                )
+                temp_dir = Path("data/videos/temp")
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                
+                if uploaded_file is not None:
+                    safe_filename = f"upload_{cam_id}_{uploaded_file.name}"
+                    save_path = temp_dir / safe_filename
+                    with open(save_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    new_source = str(save_path)
+                    new_dev_name = None
+                    st.caption(f"📁 Loaded uploaded video: `{uploaded_file.name}`")
+                else:
+                    if curr_src_str.startswith("data/videos/temp/upload_") and Path(curr_src_str).exists():
+                        new_source = curr_src_str
+                        st.caption(f"📁 Using previous upload: `{Path(curr_src_str).name}`")
+                    else:
+                        preset_video_map = {
+                            "CAM-01": "data/videos/youtube_crowd_test.mp4",
+                            "CAM-02": "data/videos/dense_crowd_test.mp4",
+                            "CAM-03": "data/videos/real_crowd_video_1.mp4",
+                            "CAM-04": "data/videos/real_crowd_video_2.mp4"
+                        }
+                        new_source = preset_video_map.get(cam_id, "data/videos/youtube_crowd_test.mp4")
+                        st.info("Upload a video file (.mp4, .avi, .mov, .mkv, .webm) above.")
+                    new_dev_name = None
             elif "Webcam" in sel_type_str:
                 new_src_type = "webcam"
                 discovered_devs = cached_discover_camera_devices()
@@ -303,6 +392,7 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     detect_interval = st.sidebar.slider("Detection Interval (Frames)", 1, 10, 3)
     device = st.sidebar.radio("Execution Device:", ["cpu", "cuda"], horizontal=True)
     enable_alerts = st.sidebar.checkbox("Sync Firebase Alerts", value=False)
+    enable_sound_alarm = st.sidebar.checkbox("🔔 Enable Emergency Alarm Sound", value=True)
     
     st.sidebar.divider()
     col_start, col_stop = st.sidebar.columns(2)
@@ -322,6 +412,7 @@ else:
         pass
 
 # ========== LAYOUT PLACEHOLDERS ==========
+system_banner = st.empty()
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
@@ -434,6 +525,10 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                 risk_adapter = None
                 
             metrics_logger = MetricsLogger()
+            
+            if "direct_alert_manager" not in st.session_state:
+                st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True)
+            direct_alert_mgr = st.session_state.direct_alert_manager
             
             alert_manager = None
             if enable_alerts and fb_initialized:
@@ -559,13 +654,15 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         annotated_frame = FrameAnnotator.create_dashboard_frame(
                             heatmap_base,
                             {
+                                "camera_id": "DIRECT-01",
                                 "person_count": person_count,
                                 "density": max_density,
                                 "anomaly": anomaly_score,
                                 "avg_speed": avg_speed,
                                 "dominant_direction": dominant_dir,
                                 "risk": risk_level_str,
-                                "combined_score": combined_score
+                                "combined_score": combined_score,
+                                "fps": float(np.mean(fps_deque)) if fps_deque else 0.0
                             },
                             density_map,
                             grid_size=(4, 4),
@@ -578,10 +675,6 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     current_fps = 1000.0 / frame_ms if frame_ms > 0 else 0.0
                     fps_deque.append(current_fps)
                     avg_fps = float(np.mean(fps_deque))
-                    
-                    # Draw FPS overlay
-                    cv2.putText(annotated_frame, f"FPS: {avg_fps:.1f}", (20, frame.shape[0] - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                     
                     # Log to CSV
                     if detection_mode == "🗣️ Head Mode — Experimental":
@@ -637,13 +730,84 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         }
                     metrics_logger.log(metrics_payload, frame_count)
                     
+                    # Pass telemetry to persistent AlertManager under DIRECT-01
+                    direct_telemetry = dict(metrics_payload)
+                    direct_telemetry["camera_id"] = "DIRECT-01"
+                    direct_telemetry["camera_name"] = "Direct Stream"
+                    direct_telemetry["risk_level"] = str(risk_level_str).upper()
+                    direct_telemetry["risk_score"] = float(combined_score)
+
+                    direct_alert_mgr.process_camera_telemetry("DIRECT-01", "Direct Stream", direct_telemetry)
+                    
+                    unack_direct_high = direct_alert_mgr.get_unacknowledged_high_alerts()
+                    pending_direct_alarms = direct_alert_mgr.get_pending_alarm_alerts()
+                    active_direct_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
+
+                    # Audio chime trigger if new HIGH alert triggered and sound enabled
+                    audio_direct_html = ""
+                    if pending_direct_alarms and enable_sound_alarm:
+                        audio_direct_html = """<audio autoplay style="display:none;"><source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUtvT18AAAAA//8AAAD//wAA//8=" type="audio/wav"></audio>"""
+
+                    # Render Emergency Flashing Banner at top of Direct Stream
+                    if unack_direct_high:
+                        system_banner.markdown(f"""{audio_direct_html}
+                        <div class="cp-emergency-banner">
+                            <div style="font-size:1.15em; font-weight:bold;">🚨 HIGH-RISK SECURITY EMERGENCY ALERT</div>
+                            <div style="margin-top:4px; font-size:0.95em;">Camera: <b>Direct Stream (DIRECT-01)</b> | Risk Score: <b>{combined_score:.1f}/100</b></div>
+                            <div style="margin-top:2px; font-size:0.90em;">Reason: <b>{active_direct_alt.reason if active_direct_alt else 'High crowd risk'}</b></div>
+                            <div style="margin-top:4px; font-size:0.82em; color:#ffdddd;">⚠️ Immediate operator attention required. Click 'Acknowledge Alert' in sidebar to silence alarm while continuing active monitoring.</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    elif active_direct_alt and active_direct_alt.risk_level == "HIGH" and active_direct_alt.acknowledged:
+                        system_banner.warning(f"⚠️ **DIRECT STREAM STATUS: HIGH RISK (ACKNOWLEDGED)** | Risk Score: **{combined_score:.1f}** | Camera: **Direct Stream (DIRECT-01)**")
+                    elif active_direct_alt and active_direct_alt.risk_level == "MEDIUM":
+                        system_banner.warning(f"🟡 **DIRECT STREAM STATUS: ELEVATED / MEDIUM RISK** | Risk Score: **{combined_score:.1f}** | Camera: **Direct Stream (DIRECT-01)**")
+                    else:
+                        system_banner.empty()
+
+                    # Render Alerts & Event Log Panel for DIRECT-01
+                    if active_direct_alt:
+                        alt = active_direct_alt
+                        if alt.risk_level == "HIGH" and not alt.acknowledged:
+                            b_col, bg_col = "#ff0000", "#3a0000"
+                            badge_lbl = f"🚨 HIGH-RISK SECURITY ALERT ({alt.risk_score:.1f})"
+                            ack_str = "<b>UNACKNOWLEDGED EMERGENCY</b>"
+                        elif alt.risk_level == "HIGH" and alt.acknowledged:
+                            b_col, bg_col = "#ff8800", "#2a1500"
+                            badge_lbl = f"⚠️ HIGH RISK — ACKNOWLEDGED ({alt.risk_score:.1f})"
+                            ack_str = f"<b>ACKNOWLEDGED</b> by {alt.acknowledged_by or 'Operator'}"
+                        else:
+                            b_col, bg_col = "#ffaa00", "#2a2000"
+                            badge_lbl = f"🟡 ELEVATED RISK ({alt.risk_score:.1f})"
+                            ack_str = "<b>ACTIVE WARNING</b>"
+                            
+                        alerts_placeholder.markdown(f"""
+                        <div style="background:{bg_col}; border:2px solid {b_col}; padding:12px; border-radius:8px; margin-bottom:10px;">
+                            <div style="color:{b_col}; font-weight:bold; font-size:1.1em;">{badge_lbl}</div>
+                            <div style="color:#fff; font-size:1.0em; margin-top:4px;">Risk Score: <b>{alt.risk_score:.1f}</b></div>
+                            <div style="color:#eee; font-size:0.9em; margin-top:2px;">Reason: <b>{alt.reason}</b></div>
+                            <div style="color:#aaa; font-size:0.82em; margin-top:4px;">Camera: <b>Direct Stream (DIRECT-01)</b> &nbsp;|&nbsp; State: {ack_str}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        alerts_placeholder.markdown("""
+                        <div style="background:#1a2e1a; border:2px solid #00ff88; padding:12px; border-radius:8px; margin-bottom:10px;">
+                            <div style="color:#00ff88; font-weight:bold; font-size:1.1em;">🟢 NORMAL</div>
+                            <div style="color:#eee; font-size:0.9em; margin-top:4px;">No active security alerts for Direct Stream (DIRECT-01).</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
                     if alert_manager and (time.time() - last_firebase_update > 1.0):
                         alert_manager.update_dashboard_data(metrics_payload)
                         last_firebase_update = time.time()
                     
-                    # OPTIMIZATION 1: High-Speed Web JPEG Stream Compression
-                    display_frame = cv2.resize(annotated_frame, preview_resolution)
-                    _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
+                    # High-Quality Web Stream Compression (Preserves Native Resolution when preview matches)
+                    if preview_resolution is not None and (annotated_frame.shape[1], annotated_frame.shape[0]) != preview_resolution:
+                        display_frame = cv2.resize(annotated_frame, preview_resolution)
+                    else:
+                        display_frame = annotated_frame
+
+                    _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
                     video_placeholder.image(jpeg_buffer.tobytes(), use_container_width=True)
                     
                     # Update Session State History for Real-Time Charts
@@ -722,6 +886,31 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     from src.multi_camera_manager import MultiCameraManager
 
     if st.session_state.is_monitoring:
+        st.markdown("""
+        <style>
+        @keyframes cp-pulse-red {
+            0% { background-color: #660000; box-shadow: 0 0 10px #ff0000; }
+            50% { background-color: #aa0000; box-shadow: 0 0 25px #ff4444; }
+            100% { background-color: #660000; box-shadow: 0 0 10px #ff0000; }
+        }
+        @keyframes cp-glow-red-tile {
+            0% { border-color: #ff0000; box-shadow: 0 0 10px #ff0000; }
+            50% { border-color: #ff4444; box-shadow: 0 0 25px #ff4444; }
+            100% { border-color: #ff0000; box-shadow: 0 0 10px #ff0000; }
+        }
+        .cp-emergency-banner {
+            animation: cp-pulse-red 1.4s infinite;
+            color: #ffffff;
+            padding: 14px 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 2px solid #ff2222;
+        }
+        .cp-tile-high-emergency {
+            animation: cp-glow-red-tile 1.4s infinite;
+        }
+        </style>
+        """, unsafe_allow_html=True)
         st.subheader("🖥️ Multi-Camera CCTV Command Center Grid")
         system_banner = st.empty()
         alert_center_ph = st.empty()
@@ -818,7 +1007,17 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                         st.session_state.is_monitoring = False
                         break
                         
-                    # 1. Update overall risk banner
+                    # 1. Check unacknowledged HIGH alerts & pending alarm sound triggers
+                    unack_high_alts = multi_cam.get_unacknowledged_high_alerts()
+                    pending_alarms = multi_cam.get_pending_alarm_alerts()
+                    
+                    # 1a. Trigger HTML5 Audio Alarm if new HIGH alert triggered and sound enabled
+                    audio_html = ""
+                    if pending_alarms and enable_sound_alarm:
+                        # Embedded base64 audio chime sound
+                        audio_html = """<audio autoplay style="display:none;"><source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUtvT18AAAAA//8AAAD//wAA//8=" type="audio/wav"></audio>"""
+
+                    # 1b. Update overall risk banner / Emergency Flashing Banner
                     sys_risk = multi_cam.get_overall_system_risk()
                     overall_level = sys_risk["overall_risk_level"]
                     highest_id = sys_risk["highest_risk_camera_id"]
@@ -826,29 +1025,49 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                     highest_score = sys_risk["highest_risk_score"]
                     active_cams = sys_risk["active_camera_count"]
                     
-                    if overall_level == "HIGH":
-                        system_banner.error(f"🔴 **COMMAND CENTER OVERALL STATUS: HIGH RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
+                    if unack_high_alts:
+                        high_cams_info = ", ".join([f"<b>{a.camera_id}</b> ({a.camera_name})" for a in unack_high_alts])
+                        system_banner.markdown(f"""{audio_html}
+                        <div class="cp-emergency-banner">
+                            <div style="font-size:1.15em; font-weight:bold;">🚨 HIGH-RISK SECURITY EMERGENCY ALERT ({len(unack_high_alts)} Active Feed{'s' if len(unack_high_alts)>1 else ''})</div>
+                            <div style="margin-top:4px; font-size:0.92em;">Emergency Streams: {high_cams_info} | Max Score: <b>{highest_score:.1f}/100</b></div>
+                            <div style="margin-top:4px; font-size:0.82em; color:#ffdddd;">⚠️ Immediate operator attention required. Click 'Acknowledge' in Alert Center to silence alarm while continuing active monitoring.</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    elif overall_level == "HIGH":
+                        system_banner.warning(f"{audio_html}⚠️ **COMMAND CENTER STATUS: HIGH RISK (ACKNOWLEDGED)** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
                     elif overall_level == "MEDIUM":
                         system_banner.warning(f"🟡 **COMMAND CENTER OVERALL STATUS: MEDIUM RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
                     else:
                         system_banner.success(f"🟢 **COMMAND CENTER OVERALL STATUS: NORMAL / LOW RISK** | Active CCTV Feeds: **{active_cams}**")
                     
-                    # 1b. Render Alert Center Panel
+                    # 1c. Render Alert Center Panel
                     active_alts = multi_cam.get_active_alerts()
                     if active_alts:
                         alt_htmls = []
                         for alt in active_alts:
-                            b_col = "#ffaa00" if alt.risk_level == "MEDIUM" else "#ff0000"
-                            bg_col = "#2a2000" if alt.risk_level == "MEDIUM" else "#3a0000"
-                            badge_lbl = f"🟡 MEDIUM ({alt.risk_score:.1f})" if alt.risk_level == "MEDIUM" else f"🔴 HIGH ({alt.risk_score:.1f})"
-                            if alt.status == "ESCALATED":
+                            if alt.risk_level == "HIGH" and not alt.acknowledged:
+                                b_col, bg_col = "#ff0000", "#3a0000"
+                                badge_lbl = f"🚨 HIGH EMERGENCY ({alt.risk_score:.1f})"
+                            elif alt.risk_level == "HIGH" and alt.acknowledged:
+                                b_col, bg_col = "#ff8800", "#2a1500"
+                                badge_lbl = f"⚠️ HIGH (ACKNOWLEDGED) ({alt.risk_score:.1f})"
+                            elif alt.status == "ESCALATED":
+                                b_col, bg_col = "#ff0000", "#3a0000"
                                 badge_lbl = f"🚨 ESCALATED HIGH ({alt.risk_score:.1f})"
+                            else:
+                                b_col, bg_col = "#ffaa00", "#2a2000"
+                                badge_lbl = f"🟡 MEDIUM ({alt.risk_score:.1f})"
+
+                            ack_status_str = f"<b>ACKNOWLEDGED</b> by {alt.acknowledged_by or 'Operator'}" if alt.acknowledged else "<b>UNACKNOWLEDGED</b>"
+
                             alt_htmls.append(f"""
                             <div style="background:{bg_col}; border:1px solid {b_col}; padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:0.85em;">
                                 <b>{alt.camera_id}</b> ({alt.camera_name}) &nbsp;|&nbsp;
                                 <span style="color:{b_col}; font-weight:bold;">{badge_lbl}</span> &nbsp;|&nbsp;
+                                <span style="color:#eee;">📍 Risk Zone: <b>{alt.primary_risk_zone}</b> ({alt.primary_zone_density} p/cell)</span> &nbsp;|&nbsp;
                                 <span style="color:#eee;">Reason: {alt.reason}</span> &nbsp;|&nbsp;
-                                <span style="color:#aaa;">Status: {alt.status}</span>
+                                <span style="color:#aaa;">State: {ack_status_str}</span>
                             </div>
                             """)
                         alert_center_ph.markdown(
@@ -876,20 +1095,43 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                             _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
                             grid_video_ph[cam_id].image(jpeg_buffer.tobytes(), use_container_width=True)
                             
-                            risk_colors = {"LOW": "#00ff88", "MEDIUM": "#ffaa00", "HIGH": "#ff0000", "UNKNOWN": "#666"}
-                            badge_color = risk_colors.get(cam.risk_level, "#666")
+                            cam_alt = multi_cam.alert_manager.get_camera_alert_status(cam_id) if multi_cam.alert_manager else None
+                            is_unack_high = (cam.risk_level == "HIGH" and cam_alt is not None and not cam_alt.acknowledged)
+                            is_ack_high = (cam.risk_level == "HIGH" and cam_alt is not None and cam_alt.acknowledged)
+
+                            if is_unack_high:
+                                tile_css_cls = "cp-tile-high-emergency"
+                                border_style = "border:3px solid #ff0000;"
+                                risk_lbl_str = f"🚨 HIGH RISK — EMERGENCY ({cam.risk_score:.1f})"
+                                badge_color = "#ff0000"
+                            elif is_ack_high:
+                                tile_css_cls = ""
+                                border_style = "border:2px solid #ff8800;"
+                                risk_lbl_str = f"⚠️ HIGH RISK — ACKNOWLEDGED ({cam.risk_score:.1f})"
+                                badge_color = "#ff8800"
+                            elif cam.risk_level == "MEDIUM":
+                                tile_css_cls = ""
+                                border_style = "border:2px solid #ffaa00;"
+                                risk_lbl_str = f"🟡 MEDIUM RISK ({cam.risk_score:.1f})"
+                                badge_color = "#ffaa00"
+                            else:
+                                tile_css_cls = ""
+                                border_style = "border:2px solid #00ff88;"
+                                risk_lbl_str = f"🟢 LOW RISK ({cam.risk_score:.1f})"
+                                badge_color = "#00ff88"
                             
                             count_label = "Visible Heads" if mode_key == "HEAD" else "Tracked Persons"
                             count_val = cam.visible_count if mode_key == "HEAD" else cam.active_count
+                            cam_spatial = extract_spatial_risk_info(cam.density_map)
                             
                             grid_metric_ph[cam_id].markdown(f"""
-                            <div style="background:#1a1a2e; padding:10px; border-radius:8px; border:2px solid {badge_color}; margin-bottom:15px;">
+                            <div class="{tile_css_cls}" style="background:#1a1a2e; padding:10px; border-radius:8px; {border_style} margin-bottom:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="color:{badge_color}; font-weight:bold; font-size:1.0em;">RISK: {cam.risk_level} ({cam.risk_score:.1f})</span>
+                                    <span style="color:{badge_color}; font-weight:bold; font-size:1.0em;">{risk_lbl_str}</span>
                                     <span style="color:#aaa; font-size:0.85em;">{src_badge_str} | FPS: {cam.fps:.1f}</span>
                                 </div>
                                 <div style="margin-top:5px; font-size:0.88em; color:#ddd;">
-                                    👥 {count_label}: <b>{count_val}</b> | 📊 Density: <b>{cam.max_density}</b> | 🏃 Speed: <b>{cam.avg_speed:.1f} px/f</b> ({cam.dominant_direction})
+                                    👥 {count_label}: <b>{count_val}</b> | 📍 Risk Zone: <b>{cam_spatial['primary_risk_zone']}</b> (<b>{cam_spatial['primary_zone_density']}</b> p/cell) | 🏃 Speed: <b>{cam.avg_speed:.1f} px/f</b> ({cam.dominant_direction})
                                 </div>
                                 <div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #333; padding-top:3px;">
                                     🔍 Active Src: <b>{dbg_info['active_source_type'].upper()}</b> ({dbg_info['active_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>

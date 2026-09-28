@@ -104,53 +104,66 @@ class MetricsLogger:
 
 
 class FrameAnnotator:
-    """Advanced visualization utilities"""
+    """Advanced visualization utilities with high-readability HUD and clean overlays"""
     
     @staticmethod
     def draw_risk_banner(frame, risk_level, combined_score):
-        """Draw prominent risk banner on frame"""
+        """Draw top status banner on frame"""
         h, w = frame.shape[:2]
-        banner_height = 50
+        banner_height = 45
         
-        risk_colors = {
-            "Low": (0, 255, 0),
-            "Medium": (0, 200, 255),
-            "High": (0, 0, 255)
-        }
-        color = risk_colors.get(risk_level, (128, 128, 128))
-        
-        # Banner background
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, banner_height), color, -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        cv2.rectangle(overlay, (0, 0), (w, banner_height), (15, 20, 28), -1)
+        frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
         
-        # Banner text
-        text = f"RISK LEVEL: {risk_level.upper()} | SCORE: {combined_score:.1f}"
-        cv2.putText(frame, text, (20, 35), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-        
+        text = f"CROWDPATROL | RISK: {str(risk_level).upper()} | SCORE: {combined_score:.1f}"
+        cv2.putText(frame, text, (15, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
         return frame
     
     @staticmethod
-    def draw_density_zones(frame, density_map, grid_size=(4, 4)):
-        """Draw grid lines and density numbers on zones"""
+    def draw_density_zones(frame, density_map, grid_size=(4, 4), risk_level="LOW"):
+        """Draw subtle grid lines, cell counts, and highlight primary risk zone."""
+        from src.alert_manager import extract_spatial_risk_info
         h, w = frame.shape[:2]
-        cell_h, cell_w = h // grid_size[0], w // grid_size[1]
+        cell_h, cell_w = max(1, h // grid_size[0]), max(1, w // grid_size[1])
+        ROW_LETTERS = ['A', 'B', 'C', 'D']
         
-        for i in range(grid_size[0]):
+        spatial_info = extract_spatial_risk_info(density_map)
+        primary_zone = spatial_info["primary_risk_zone"]
+        primary_val = spatial_info["primary_zone_density"]
+        
+        for i in range(min(grid_size[0], len(ROW_LETTERS))):
             for j in range(grid_size[1]):
                 x1, y1 = j * cell_w, i * cell_h
                 x2, y2 = (j + 1) * cell_w, (i + 1) * cell_h
+                cell_id = f"{ROW_LETTERS[i]}{j + 1}"
                 
-                # Grid lines
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 1)
+                is_primary = (cell_id == primary_zone and primary_val > 0)
                 
-                # Density count
-                count = density_map[i, j]
-                text = str(count)
-                text_pos = (x1 + cell_w//2 - 15, y1 + cell_h//2 + 10)
-                cv2.putText(frame, text, text_pos,
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                if is_primary and str(risk_level).upper() == "HIGH":
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 240), 3)
+                    badge_str = f"RISK ZONE: {cell_id}"
+                    (tw, th), _ = cv2.getTextSize(badge_str, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                    cv2.rectangle(frame, (x1 + 4, y1 + 4), (x1 + tw + 10, y1 + th + 10), (0, 0, 240), -1)
+                    cv2.putText(frame, badge_str, (x1 + 7, y1 + th + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+                elif is_primary and str(risk_level).upper() == "MEDIUM":
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 140, 240), 2)
+                    badge_str = f"ZONE: {cell_id}"
+                    (tw, th), _ = cv2.getTextSize(badge_str, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                    cv2.rectangle(frame, (x1 + 4, y1 + 4), (x1 + tw + 10, y1 + th + 10), (0, 140, 220), -1)
+                    cv2.putText(frame, badge_str, (x1 + 7, y1 + th + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+                else:
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1)
+                
+                count = density_map[i, j] if hasattr(density_map, '__getitem__') else 0
+                if count > 0:
+                    text = str(count)
+                    text_pos = (x1 + cell_w // 2 - 8, y1 + cell_h // 2 + 6)
+                    cv2.putText(frame, text, text_pos,
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
         
         return frame
     
@@ -158,14 +171,13 @@ class FrameAnnotator:
     def draw_motion_vectors(frame, tracks, previous_centroids):
         """Draw motion arrows showing movement direction"""
         for track in tracks:
-            x1, y1, x2, y2, track_id = track
+            x1, y1, x2, y2, track_id = track[:5]
             centroid = np.array([(x1+x2)/2, (y1+y2)/2], dtype=np.int32)
             
             if track_id in previous_centroids:
                 prev = previous_centroids[track_id].astype(np.int32)
                 cv2.arrowedLine(frame, tuple(prev), tuple(centroid),
-                              (0, 255, 255), 2, tipLength=0.3)
-        
+                              (0, 255, 255), 1, line_type=cv2.LINE_AA, tipLength=0.3)
         return frame
     
     @staticmethod
@@ -180,91 +192,163 @@ class FrameAnnotator:
                 cx = c * cell_w + cell_w // 2
                 cy = r * cell_h + cell_h // 2
                 
-                # Highlight sudden movement with red flashing cell boundary
                 if cell.sudden_movement:
                     x1, y1 = c * cell_w, r * cell_h
                     x2, y2 = (c + 1) * cell_w, (r + 1) * cell_h
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                    cv2.putText(frame, "SPIKE", (x1 + 5, y1 + 20),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 240), 2)
+                    cv2.putText(frame, "SPIKE", (x1 + 5, y1 + 18),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 240), 1, cv2.LINE_AA)
                 
-                # Draw arrow if cell has meaningful motion magnitude (> 0.5 px/frame)
                 if cell.magnitude > 0.5:
-                    # Arrow tip scaled by magnitude
-                    arrow_len = min(max(10, int(cell.magnitude * 5)), min(cell_w, cell_h) // 2)
+                    arrow_len = min(max(8, int(cell.magnitude * 4)), min(cell_w, cell_h) // 3)
                     end_x = int(cx + (cell.vx / max(cell.magnitude, 1e-5)) * arrow_len)
                     end_y = int(cy + (cell.vy / max(cell.magnitude, 1e-5)) * arrow_len)
                     
-                    arrow_color = (0, 255, 255) if not cell.sudden_movement else (0, 0, 255)
-                    cv2.arrowedLine(frame, (cx, cy), (end_x, end_y), arrow_color, 2, tipLength=0.3)
+                    arrow_color = (0, 220, 255) if not cell.sudden_movement else (0, 0, 240)
+                    cv2.arrowedLine(frame, (cx, cy), (end_x, end_y), arrow_color, 1, line_type=cv2.LINE_AA, tipLength=0.3)
         return frame
 
     @staticmethod
     def draw_tracks(frame, tracks):
-        """Draw green bounding boxes and DeepSORT track IDs for tracked persons"""
+        """Draw thin green bounding boxes and compact 'P23' track labels"""
         for track in tracks:
-            x1, y1, x2, y2, track_id = track
+            x1, y1, x2, y2, track_id = track[:5]
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             
-            # Draw green bounding box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 230, 80), 1)
             
-            # Draw track ID badge
-            label = f"ID:{track_id}"
-            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-            cv2.rectangle(frame, (x1, max(0, y1 - 20)), (x1 + lw + 6, max(20, y1)), (0, 255, 0), -1)
-            cv2.putText(frame, label, (x1 + 3, max(15, y1 - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            label = f"P{track_id}"
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+            cv2.rectangle(frame, (x1, max(0, y1 - 15)), (x1 + lw + 4, max(15, y1)), (0, 180, 60), -1)
+            cv2.putText(frame, label, (x1 + 2, max(12, y1 - 3)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1, cv2.LINE_AA)
+        return frame
+
+    @staticmethod
+    def draw_telemetry_hud(frame, metrics, camera_id="CAM-01"):
+        """Draw high-readability semi-transparent telemetry HUD at top of frame."""
+        from src.alert_manager import extract_spatial_risk_info
+        h, w = frame.shape[:2]
+        
+        person_cnt = metrics.get("person_count", 0)
+        risk_str = str(metrics.get("risk", "LOW")).upper()
+        risk_score = metrics.get("combined_score", 0.0)
+        fps_val = metrics.get("fps", 0.0)
+        cam_id = metrics.get("camera_id", camera_id)
+        
+        spatial_info = extract_spatial_risk_info(metrics.get("density_map")) if "density_map" in metrics else {"primary_risk_zone": metrics.get("risk_zone", "--")}
+        risk_zone = spatial_info.get("primary_risk_zone", "--")
+
+        if risk_str == "HIGH":
+            badge_bg = (0, 0, 220)
+            risk_text = f"● HIGH ({risk_score:.1f})"
+        elif risk_str == "MEDIUM":
+            badge_bg = (0, 140, 240)
+            risk_text = f"● MEDIUM ({risk_score:.1f})"
+        else:
+            badge_bg = (30, 160, 50)
+            risk_text = f"● LOW ({risk_score:.1f})"
+
+        overlay = frame.copy()
+        
+        if w >= 500:
+            hud_h = 65
+            cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 16, 24), -1)
+            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+            
+            cv2.putText(frame, "CROWDPATROL", (15, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, "● MONITORING", (160, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 80), 1, cv2.LINE_AA)
+            cv2.putText(frame, f"CAM: {cam_id}", (w - 180, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+
+            cv2.putText(frame, f"PERSONS: {person_cnt}", (15, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            (rw, rh), _ = cv2.getTextSize(risk_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 2)
+            rx = 180
+            cv2.rectangle(frame, (rx - 4, 36), (rx + rw + 8, 56), badge_bg, -1)
+            cv2.putText(frame, risk_text, (rx, 51), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+
+            cv2.putText(frame, f"ZONE: {risk_zone}", (rx + rw + 25, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"FPS: {fps_val:.1f}", (w - 180, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 180), 2, cv2.LINE_AA)
+        else:
+            hud_h = 40
+            cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 16, 24), -1)
+            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+
+            title_str = f"{cam_id} | 👥 {person_cnt} | "
+            cv2.putText(frame, title_str, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+            
+            (tw, _), _ = cv2.getTextSize(title_str, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+            (rw, rh), _ = cv2.getTextSize(risk_str, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 2)
+            cv2.rectangle(frame, (8 + tw, 10), (8 + tw + rw + 6, 30), badge_bg, -1)
+            cv2.putText(frame, risk_str, (8 + tw + 3, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            cv2.putText(frame, f"Z:{risk_zone} | {fps_val:.1f} FPS", (8 + tw + rw + 15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 220, 255), 1, cv2.LINE_AA)
+
         return frame
 
     @staticmethod
     def create_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4), grid_matrix=None, tracks=None):
-        """Create complete dashboard view with all overlays"""
+        """Create complete high-readability dashboard view with clean overlays and HUD"""
+        from src.alert_manager import extract_spatial_risk_info
         frame = frame.copy()
+        h, w = frame.shape[:2]
         
-        # 1. Bounding Boxes & DeepSORT Track IDs
+        spatial_info = extract_spatial_risk_info(density_map)
+        metrics["density_map"] = density_map
+        metrics["risk_zone"] = spatial_info["primary_risk_zone"]
+        
         if tracks is not None and len(tracks) > 0:
             frame = FrameAnnotator.draw_tracks(frame, tracks)
         
-        # 2. Risk banner
-        frame = FrameAnnotator.draw_risk_banner(
-            frame, metrics.get("risk", "Low"), metrics.get("combined_score", 0)
-        )
+        frame = FrameAnnotator.draw_density_zones(frame, density_map, grid_size, risk_level=metrics.get("risk", "Low"))
         
-        # 3. Density grid
-        frame = FrameAnnotator.draw_density_zones(frame, density_map, grid_size)
-        
-        # 4. Optical flow motion arrows overlay
         if grid_matrix is not None:
             frame = FrameAnnotator.draw_optical_flow_grid(frame, grid_matrix, grid_size)
-        
-        # Info panel (right side)
-        h, w = frame.shape[:2]
-        panel_x = w - 220
-        cv2.rectangle(frame, (panel_x, 0), (w, h), (0, 0, 0, 128), -1)
-        
-        y = 80
-        info_items = [
-            ("Persons", metrics.get("person_count", 0)),
-            ("Max Density", metrics.get("density", 0)),
-            ("Anomaly", f"{metrics.get('anomaly', 0):.2f}"),
-            ("Avg Speed", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
-            ("Heading", str(metrics.get("dominant_direction", "STATIC"))),
-            ("Risk Score", f"{metrics.get('combined_score', 0):.1f}"),
-        ]
-        
-        for label, value in info_items:
-            cv2.putText(frame, f"{label}:", (panel_x + 10, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
-            cv2.putText(frame, str(value), (panel_x + 110, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-            y += 30
-        
+            
+        frame = FrameAnnotator.draw_telemetry_hud(frame, metrics, camera_id=metrics.get("camera_id", "CAM-01"))
+
+        if w >= 640:
+            panel_w = 210
+            panel_x = w - panel_w
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (panel_x, 65), (w, h - 10), (15, 22, 32), -1)
+            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+            cv2.rectangle(frame, (panel_x, 65), (w, h - 10), (50, 65, 85), 1)
+            
+            y = 92
+            risk_lvl = str(metrics.get("risk", "LOW")).upper()
+            info_items = [
+                ("CAMERA", metrics.get("camera_id", "CAM-01")),
+                ("PERSONS", str(metrics.get("person_count", 0))),
+                ("DENSITY", f"{metrics.get('density', 0)} / cell"),
+                ("RISK LEVEL", risk_lvl),
+                ("RISK SCORE", f"{metrics.get('combined_score', 0.0):.1f}"),
+                ("AVG SPEED", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
+                ("MAX SPEED", f"{metrics.get('max_speed', 0.0):.1f} px/f"),
+                ("HEADING", str(metrics.get("dominant_direction", "STATIC"))),
+                ("FPS", f"{metrics.get('fps', 0.0):.1f}"),
+                ("RISK ZONE", f"{spatial_info['primary_risk_zone']} ({spatial_info['primary_zone_density']})"),
+            ]
+            
+            for label, value in info_items:
+                cv2.putText(frame, f"{label}:", (panel_x + 12, y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.42, (170, 180, 195), 1, cv2.LINE_AA)
+                
+                val_color = (255, 255, 255)
+                if label == "RISK LEVEL":
+                    val_color = (0, 0, 240) if risk_lvl == "HIGH" else ((0, 140, 240) if risk_lvl == "MEDIUM" else (40, 200, 60))
+                elif label == "RISK ZONE":
+                    val_color = (0, 220, 255)
+                    
+                cv2.putText(frame, str(value), (panel_x + 105, y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.45, val_color, 2 if label in ["PERSONS", "RISK LEVEL", "RISK SCORE"] else 1, cv2.LINE_AA)
+                y += 26
+
         return frame
 
     @staticmethod
     def draw_head_tracks(frame, tracks):
-        """Draw cyan bounding boxes and DeepSORT head track IDs for tracked heads"""
+        """Draw thin cyan bounding boxes and compact 'H23' head track labels"""
         for track in tracks:
             if len(track) >= 5:
                 x1, y1, x2, y2, track_id = track[:5]
@@ -272,89 +356,111 @@ class FrameAnnotator:
                 continue
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             
-            # Draw cyan bounding box (BGR: 255, 255, 0)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 230, 0), 1)
             
-            # Draw track ID badge
-            label = f"head#{track_id}"
-            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-            cv2.rectangle(frame, (x1, max(0, y1 - 18)), (x1 + lw + 4, max(18, y1)), (255, 255, 0), -1)
-            cv2.putText(frame, label, (x1 + 2, max(14, y1 - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+            label = f"H{track_id}"
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+            cv2.rectangle(frame, (x1, max(0, y1 - 15)), (x1 + lw + 4, max(15, y1)), (255, 200, 0), -1)
+            cv2.putText(frame, label, (x1 + 2, max(12, y1 - 3)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 1)
         return frame
 
     @staticmethod
-    def draw_head_density_zones(frame, density_map, grid_size=(4, 4)):
-        """Draw yellow grid lines and head density numbers on zones"""
+    def draw_head_density_zones(frame, density_map, grid_size=(4, 4), risk_level="LOW"):
+        """Draw yellow grid lines, head density numbers on zones, and highlight primary risk zone."""
+        from src.alert_manager import extract_spatial_risk_info
         h, w = frame.shape[:2]
         cell_h, cell_w = max(1, h // grid_size[0]), max(1, w // grid_size[1])
+        ROW_LETTERS = ['A', 'B', 'C', 'D']
         
-        for i in range(grid_size[0]):
+        spatial_info = extract_spatial_risk_info(density_map)
+        primary_zone = spatial_info["primary_risk_zone"]
+        primary_val = spatial_info["primary_zone_density"]
+        
+        for i in range(min(grid_size[0], len(ROW_LETTERS))):
             for j in range(grid_size[1]):
                 x1, y1 = j * cell_w, i * cell_h
                 x2, y2 = (j + 1) * cell_w, (i + 1) * cell_h
+                cell_id = f"{ROW_LETTERS[i]}{j + 1}"
                 
-                # Grid lines (yellow: BGR 0, 255, 255)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 1)
+                is_primary = (cell_id == primary_zone and primary_val > 0)
                 
-                # Density count
-                count = density_map[i, j]
+                if is_primary and str(risk_level).upper() == "HIGH":
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 240), 3)
+                    badge_str = f"RISK ZONE: {cell_id}"
+                    (tw, th), _ = cv2.getTextSize(badge_str, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                    cv2.rectangle(frame, (x1 + 4, y1 + 4), (x1 + tw + 10, y1 + th + 10), (0, 0, 240), -1)
+                    cv2.putText(frame, badge_str, (x1 + 7, y1 + th + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+                elif is_primary and str(risk_level).upper() == "MEDIUM":
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 140, 240), 2)
+                    badge_str = f"ZONE: {cell_id}"
+                    (tw, th), _ = cv2.getTextSize(badge_str, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                    cv2.rectangle(frame, (x1 + 4, y1 + 4), (x1 + tw + 10, y1 + th + 10), (0, 140, 220), -1)
+                    cv2.putText(frame, badge_str, (x1 + 7, y1 + th + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+                else:
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 220, 220), 1)
+                
+                count = density_map[i, j] if hasattr(density_map, '__getitem__') else 0
                 if count > 0:
                     text = f"H:{count}"
                     text_pos = (x1 + 10, y1 + 25)
                     cv2.putText(frame, text, text_pos,
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 220), 1)
         return frame
 
     @staticmethod
     def create_head_dashboard_frame(frame, metrics, density_map, grid_size=(4, 4), grid_matrix=None, tracks=None):
         """Create head mode dashboard view with cyan boxes and experimental HUD"""
+        from src.alert_manager import extract_spatial_risk_info
         frame = frame.copy()
         h, w = frame.shape[:2]
         
-        # 1. Cyan Bounding Boxes & DeepSORT Head Track IDs
+        spatial_info = extract_spatial_risk_info(density_map)
+        metrics["density_map"] = density_map
+        metrics["risk_zone"] = spatial_info["primary_risk_zone"]
+        
         if tracks is not None and len(tracks) > 0:
             frame = FrameAnnotator.draw_head_tracks(frame, tracks)
             
-        # 2. Yellow Grid & Head Counts
-        frame = FrameAnnotator.draw_head_density_zones(frame, density_map, grid_size)
+        frame = FrameAnnotator.draw_head_density_zones(frame, density_map, grid_size, risk_level=metrics.get("risk", "Low"))
         
-        # 3. Optical Flow Grid if available
         if grid_matrix is not None:
             frame = FrameAnnotator.draw_optical_flow_grid(frame, grid_matrix, grid_size)
             
-        # 4. Top Banner
-        banner_height = 40
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, banner_height), (0, 100, 150), -1)
-        frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
-        
-        risk_str = str(metrics.get('risk', 'LOW')).upper()
-        score_val = metrics.get('combined_score', 0.0)
-        banner_text = f"HEAD MODE -- EXPERIMENTAL | RISK: {risk_str} | SCORE: {score_val:.1f}"
-        cv2.putText(frame, banner_text, (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        
-        # 5. Info panel (right side)
-        panel_x = max(0, w - 220)
-        cv2.rectangle(frame, (panel_x, banner_height), (w, h), (0, 0, 0, 140), -1)
-        
-        y = banner_height + 25
-        info_items = [
-            ("Visible Heads", metrics.get("visible_heads", 0)),
-            ("Active Tracks", metrics.get("person_count", 0)),
-            ("Max Head Dens", metrics.get("density", 0)),
-            ("Anomaly", f"{metrics.get('anomaly', 0):.2f}"),
-            ("Avg Speed", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
-            ("Heading", str(metrics.get("dominant_direction", "STATIC"))),
-            ("Head Risk", f"{score_val:.1f}"),
-        ]
-        
-        for label, value in info_items:
-            cv2.putText(frame, f"{label}:", (panel_x + 10, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
-            cv2.putText(frame, str(value), (panel_x + 120, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-            y += 24
+        frame = FrameAnnotator.draw_telemetry_hud(frame, metrics, camera_id=metrics.get("camera_id", "HEAD-01"))
+
+        if w >= 640:
+            panel_w = 210
+            panel_x = w - panel_w
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (panel_x, 65), (w, h - 10), (15, 22, 32), -1)
+            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+            cv2.rectangle(frame, (panel_x, 65), (w, h - 10), (50, 65, 85), 1)
+            
+            y = 92
+            risk_lvl = str(metrics.get("risk", "LOW")).upper()
+            info_items = [
+                ("MODE", "HEAD EXP"),
+                ("VISIBLE HEADS", str(metrics.get("visible_heads", 0))),
+                ("ACTIVE TRACKS", str(metrics.get("person_count", 0))),
+                ("MAX HEAD DENS", str(metrics.get("density", 0))),
+                ("RISK LEVEL", risk_lvl),
+                ("HEAD RISK", f"{metrics.get('combined_score', 0.0):.1f}"),
+                ("AVG SPEED", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
+                ("HEADING", str(metrics.get("dominant_direction", "STATIC"))),
+                ("FPS", f"{metrics.get('fps', 0.0):.1f}"),
+                ("RISK ZONE", f"{spatial_info['primary_risk_zone']} ({spatial_info['primary_zone_density']})"),
+            ]
+            
+            for label, value in info_items:
+                cv2.putText(frame, f"{label}:", (panel_x + 10, y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.40, (170, 180, 195), 1)
+                val_color = (0, 255, 255)
+                cv2.putText(frame, str(value), (panel_x + 115, y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.42, val_color, 1)
+                y += 26
             
         return frame
 

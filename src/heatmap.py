@@ -50,7 +50,7 @@ def generate_heatmap(frame, tracks, grid_cols=8, grid_rows=6, draw_grid=True):
         # Mask heatmap blending to density > 0 regions
         mask = cv2.resize((density_grid > 0).astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
         mask_3d = cv2.merge([mask, mask, mask])
-        blended = cv2.addWeighted(frame, 0.5, heatmap_color, 0.5, 0)
+        blended = cv2.addWeighted(frame, 0.82, heatmap_color, 0.18, 0)
         np.copyto(overlay, blended, where=(mask_3d > 0))
     
     if draw_grid:

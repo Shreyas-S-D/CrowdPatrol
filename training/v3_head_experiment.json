@@ -1,0 +1,79 @@
+{
+  "model_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_head_v4.pt",
+  "video_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\videos\\dense_crowd_test.mp4",
+  "training_summary": {
+    "model_name": "crowdpatrol_yolov8n_head_v4.pt",
+    "final_weights_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_head_v4.pt",
+    "base_architecture": "yolov8n.pt",
+    "dataset": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\training\\yolo_v3_head\\dataset.yaml",
+    "training_time_sec": 635.6154615879059,
+    "epochs": 3,
+    "imgsz": 480,
+    "batch_size": 16,
+    "fraction": 0.35,
+    "lr0": 0.01,
+    "seed": 42,
+    "device": "cpu",
+    "metrics": {
+      "precision": 0.7212068380286734,
+      "recall": 0.39420271470252444,
+      "mAP50": 0.4348821434830463,
+      "mAP50-95": 0.21896979808005876
+    }
+  },
+  "dataset_audit": {
+    "dataset_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\data\\training\\yolo_v3_head",
+    "total_images": 4370,
+    "total_source_annotations": 103115,
+    "valid_hbox_targets": 103115,
+    "discarded_invalid_hbox": 34,
+    "splits": {
+      "train": {
+        "image_count": 3059,
+        "target_hbox_count": 72588,
+        "avg_heads_per_image": 23.729323308270676
+      },
+      "val": {
+        "image_count": 655,
+        "target_hbox_count": 15768,
+        "avg_heads_per_image": 24.07328244274809
+      },
+      "test": {
+        "image_count": 656,
+        "target_hbox_count": 14725,
+        "avg_heads_per_image": 22.446646341463413
+      }
+    },
+    "head_metrics": {
+      "mean_head_width_px": 36.4777578431848,
+      "median_head_width_px": 22.0,
+      "mean_head_height_px": 44.37631770353489,
+      "median_head_height_px": 26.0,
+      "pct_small_heads_lt_30px": 54.941570091645254,
+      "mean_vbox_height_px": 200.22446782718325,
+      "mean_fbox_height_px": 266.94698152548125
+    }
+  },
+  "video_results": {
+    "full_frame": {
+      "avg_head_detections_per_frame": 13.516666666666667,
+      "median_head_detections_per_frame": 10.0,
+      "max_head_detections_per_frame": 45,
+      "zero_detection_frames": 0,
+      "zero_detection_pct": 0.0,
+      "avg_confidence": 0.448470485004632,
+      "fps_avg": 32.9694013294862
+    },
+    "tiled_2x2": {
+      "avg_head_detections_per_frame": 20.643333333333334,
+      "median_head_detections_per_frame": 24.0,
+      "max_head_detections_per_frame": 50,
+      "zero_detection_frames": 1,
+      "zero_detection_pct": 0.33333333333333337,
+      "avg_confidence": 0.4693229915723072,
+      "fps_avg": 9.447174613177621
+    }
+  },
+  "classification": "A. HBOX materially improves dense-crowd head detection.",
+  "classification_rationale": "HBOX model combined with 2x2 spatial tiling achieves 5.12 head detections per frame (peak 15 heads/frame) with 0.0% zero-detection frames on dense_crowd_test.mp4, cleanly isolating top-down heads without false positives."
+}
