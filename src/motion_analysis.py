@@ -45,15 +45,20 @@ class CrowdMotionAnalyzer:
         grid_size: Tuple[int, int] = (4, 4),
         downscale_size: Tuple[int, int] = (320, 180),
         accel_threshold: float = 3.0,
-        min_motion_threshold: float = 0.5
+        min_motion_threshold: float = 0.5,
+        flow_interval: int = 1
     ):
         self.grid_size = grid_size
         self.downscale_size = downscale_size
         self.accel_threshold = accel_threshold
         self.min_motion_threshold = min_motion_threshold
+        self.flow_interval = flow_interval
         
         self.prev_gray: Optional[np.ndarray] = None
         self.prev_cell_magnitudes: Optional[np.ndarray] = None
+        self.frame_idx = 0
+        self.last_grid_matrix: Optional[List[List[GridMotionCell]]] = None
+        self.last_summary: Optional[Dict] = None
         
         # Farneback parameters tuned for fast execution
         self.farneback_params = dict(
@@ -89,6 +94,12 @@ class CrowdMotionAnalyzer:
         # Convert to downscaled grayscale
         gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), self.downscale_size)
         
+        self.frame_idx += 1
+        if self.flow_interval > 1 and self.last_grid_matrix is not None:
+            if (self.frame_idx % self.flow_interval) != 0:
+                self.prev_gray = gray
+                return self.last_grid_matrix, self.last_summary
+        
         if self.prev_gray is None or self.prev_gray.shape != gray.shape:
             self.prev_gray = gray
             self.prev_cell_magnitudes = np.zeros(self.grid_size, dtype=np.float32)
@@ -112,6 +123,8 @@ class CrowdMotionAnalyzer:
                 "sudden_movement_count": 0,
                 "camera_motion_detected": False
             }
+            self.last_grid_matrix = grid_matrix
+            self.last_summary = summary
             return grid_matrix, summary
 
         # 1. Compute Dense Farneback Optical Flow on downscaled frame
@@ -218,4 +231,6 @@ class CrowdMotionAnalyzer:
             "camera_motion_detected": camera_motion_detected
         }
         
+        self.last_grid_matrix = grid_matrix
+        self.last_summary = summary
         return grid_matrix, summary

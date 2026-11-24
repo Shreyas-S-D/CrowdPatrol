@@ -6,9 +6,11 @@ Replaces Twilio SMS + SMTP email with Firebase Realtime DB + FCM.
 import firebase_admin
 from firebase_admin import credentials, db, firestore, messaging
 from datetime import datetime, timedelta
+import time
 import json
 import os
 from pathlib import Path
+from typing import Optional, List, Dict, Any
 
 
 class FirebaseAlertManager:
@@ -154,7 +156,7 @@ class FirebaseAlertManager:
     def store_camera_alert(self, alert_data: dict):
         """
         Pushes namespaced camera alert payload to Firebase RTDB at alerts/<camera_id>/<alert_id>
-        and updates active alert reference at cameras/<camera_id>/current_alert.
+        and flat reference at alerts/<alert_id>, and updates active alert reference at cameras/<camera_id>/current_alert.
         """
         try:
             cam_id = alert_data.get("camera_id", "UNKNOWN")
@@ -163,16 +165,23 @@ class FirebaseAlertManager:
             # Store at alerts/<camera_id>/<alert_id>
             alert_ref = self.rtdb.reference(f'alerts/{cam_id}/{alert_id}')
             alert_ref.set(alert_data)
+
+            # Store flat reference at alerts/<alert_id>
+            self.rtdb.reference(f'alerts/{alert_id}').set(alert_data)
             
             # Update active camera alert snapshot
             cam_alert_ref = self.rtdb.reference(f'cameras/{cam_id}/current_alert')
             cam_alert_ref.update({
                 "alert_id": alert_id,
-                "risk_level": alert_data.get("risk_level", "LOW"),
+                "risk_level": alert_data.get("risk_level", alert_data.get("severity", "LOW")),
+                "severity": alert_data.get("severity", alert_data.get("risk_level", "LOW")),
+                "category": alert_data.get("category", "CROWD_RISK"),
                 "risk_score": alert_data.get("risk_score", 0.0),
+                "crowd_density": alert_data.get("crowd_density", alert_data.get("density", 0)),
+                "person_count": alert_data.get("person_count", 0),
                 "primary_risk_zone": alert_data.get("primary_risk_zone", "A1"),
                 "primary_zone_density": alert_data.get("primary_zone_density", 0),
-                "reason": alert_data.get("reason", ""),
+                "reason": alert_data.get("reason", alert_data.get("trigger_reason", "")),
                 "status": alert_data.get("status", "ACTIVE"),
                 "timestamp": alert_data.get("timestamp", datetime.now().isoformat())
             })
@@ -183,6 +192,69 @@ class FirebaseAlertManager:
                 print(f"[!] Warning: Firebase RTDB camera alert write failure ({e}). Local execution continues.")
                 self._rtdb_cam_alert_warning_logged = True
             return None
+
+    def update_alert_status(
+        self,
+        alert_id: str,
+        camera_id: str = "UNKNOWN",
+        status: str = "ACKNOWLEDGED",
+        acknowledged_by: Optional[str] = None,
+        resolved_by: Optional[str] = None
+    ) -> bool:
+        """
+        Updates alert status and metadata across Firebase RTDB.
+        """
+        try:
+            updates = {
+                "status": status,
+                "last_updated": datetime.now().isoformat()
+            }
+            if status == "ACKNOWLEDGED":
+                updates["acknowledged"] = True
+                updates["acknowledged_at"] = datetime.now().isoformat()
+                if acknowledged_by:
+                    updates["acknowledged_by"] = acknowledged_by
+            elif status == "RESOLVED":
+                updates["resolved_at"] = datetime.now().isoformat()
+                if resolved_by:
+                    updates["resolved_by"] = resolved_by
+
+            if camera_id and camera_id != "UNKNOWN":
+                self.rtdb.reference(f'cameras/{camera_id}/current_alert').update(updates)
+                self.rtdb.reference(f'alerts/{camera_id}/{alert_id}').update(updates)
+            self.rtdb.reference(f'alerts/{alert_id}').update(updates)
+            print(f"[✓] Alert {alert_id} status updated to {status} in Firebase")
+            return True
+        except Exception as e:
+            if not getattr(self, "_rtdb_status_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB update_alert_status failure ({e}). Local operation continues.")
+                self._rtdb_status_warning_logged = True
+            return False
+
+    def get_alert_history_from_firebase(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Retrieves recent alerts from Firebase Realtime Database.
+        """
+        try:
+            alerts_ref = self.rtdb.reference('alerts')
+            data = alerts_ref.order_by_key().limit_to_last(limit).get()
+            if not data:
+                return []
+            history = []
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    if "alert_id" in v:
+                        history.append({"key": k, **v})
+                    else:
+                        for sub_k, sub_v in v.items():
+                            if isinstance(sub_v, dict) and "alert_id" in sub_v:
+                                history.append({"key": sub_k, **sub_v})
+            return history[::-1]
+        except Exception as e:
+            if not getattr(self, "_rtdb_get_history_warning_logged", False):
+                print(f"[!] Warning: Failed to fetch alert history from Firebase ({e}).")
+                self._rtdb_get_history_warning_logged = True
+            return []
     
     def store_metrics_batch(self, metrics_history):
         """

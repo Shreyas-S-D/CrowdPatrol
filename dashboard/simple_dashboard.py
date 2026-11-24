@@ -4,7 +4,50 @@ Optimized with JPEG stream compression, downsampled web preview, and throttled c
 """
 
 import streamlit as st
-import pandas as pd
+import plotly.graph_objects as go
+
+def create_risk_chart(times, scores):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=times, y=scores, mode='lines+markers', name='Risk Score',
+        line=dict(color='#ff4b4b', width=2),
+        marker=dict(size=4)
+    ))
+    fig.update_layout(
+        height=200,
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(showgrid=True, gridcolor='#333'),
+        yaxis=dict(showgrid=True, gridcolor='#333', range=[0, 100]),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#ccc', size=10)
+    )
+    return fig
+
+def create_person_density_chart(times, persons, densities, person_label="Persons"):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=times, y=persons, mode='lines+markers', name=person_label,
+        line=dict(color='#00d2ff', width=2),
+        marker=dict(size=4)
+    ))
+    fig.add_trace(go.Scatter(
+        x=times, y=densities, mode='lines+markers', name='Max Density',
+        line=dict(color='#00ff88', width=2),
+        marker=dict(size=4)
+    ))
+    fig.update_layout(
+        height=200,
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(showgrid=True, gridcolor='#333'),
+        yaxis=dict(showgrid=True, gridcolor='#333'),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#ccc', size=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
 import numpy as np
 import cv2
 import time
@@ -26,15 +69,98 @@ from src.risk_assessment import RiskAssessor
 from src.heatmap import generate_heatmap
 from src.alerts import FirebaseAlertManager
 from src.alert_manager import AlertManager, AlertEvent, extract_spatial_risk_info
+from src.notification_dispatcher import get_notification_dispatcher
 from src.utils import VideoProcessor, MetricsLogger, FrameAnnotator
-from src.camera_devices import discover_camera_devices, test_camera_source, get_camera_display_name
+from src.camera_devices import (
+    discover_camera_devices,
+    test_camera_source,
+    get_camera_display_name,
+    verify_stream_source,
+    build_phone_stream_url,
+    mask_stream_url
+)
 
 from dashboard.dashboard_utils import (
     normalize_telemetry_payload,
     evaluate_telemetry_staleness,
     load_offline_csv_fallback,
-    determine_connection_status
+    determine_connection_status,
+    render_dashboard_alerts,
+    render_dashboard_notifications
 )
+
+try:
+    from dashboard.landing_page import render_landing_page
+except ImportError:
+    from landing_page import render_landing_page
+
+# ========== AUTHENTICATION & MULTI-TENANCY INITIALIZATION ==========
+from src.auth.service import AuthService
+from src.auth.organization_service import (
+    OrganizationService,
+    MembershipService,
+    resolve_tenant_context,
+    is_platform_admin
+)
+from src.auth.invitation_service import InvitationService
+from src.auth.tenant_operational_service import TenantOperationalService
+from src.auth.provisioning import seed_initial_users_if_empty
+from dashboard.auth_ui import render_login_view, render_authenticated_placeholder
+from dashboard.org_ui import (
+    render_org_selector,
+    render_org_workspace,
+    render_platform_admin_orgs,
+    render_invitation_acceptance_view
+)
+
+@st.cache_resource
+def get_auth_service() -> AuthService:
+    service = AuthService()
+    try:
+        seed_initial_users_if_empty(service)
+    except RuntimeError as e:
+        st.error(f"Security Configuration Error: {e}")
+        st.stop()
+    return service
+
+auth_service = get_auth_service()
+
+@st.cache_resource
+def get_org_service() -> OrganizationService:
+    return OrganizationService(auth_service.db)
+
+@st.cache_resource
+def get_member_service() -> MembershipService:
+    return MembershipService(auth_service.db)
+
+@st.cache_resource
+def get_invitation_service() -> InvitationService:
+    return InvitationService(auth_service.db, auth_service)
+
+@st.cache_resource
+def get_tenant_operational_service() -> TenantOperationalService:
+    return TenantOperationalService(auth_service.db)
+
+org_service = get_org_service()
+member_service = get_member_service()
+invitation_service = get_invitation_service()
+tenant_op_service = get_tenant_operational_service()
+
+# Server-Side Session Validation on each execution
+current_raw_token = st.session_state.get("auth_token")
+if current_raw_token:
+    validated_user = auth_service.validate_session(current_raw_token)
+    if not validated_user:
+        st.session_state.pop("auth_token", None)
+        st.session_state.pop("auth_user", None)
+        st.session_state["auth_flash_message"] = "Your session has expired. Please sign in again."
+    else:
+        st.session_state["auth_user"] = validated_user
+else:
+    st.session_state.pop("auth_user", None)
+
+def is_authenticated() -> bool:
+    return st.session_state.get("auth_user") is not None
 
 @st.cache_data(ttl=30)
 def cached_discover_camera_devices():
@@ -67,7 +193,291 @@ def init_firebase():
             return False
 
 # ========== PAGE SETUP ==========
-st.set_page_config(page_title="CrowdPatrol High-FPS Dashboard", page_icon="🚨", layout="wide")
+st.set_page_config(
+    page_title="CrowdPatrol — AI Crowd Safety & Risk Intelligence",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ========== PAGE NAVIGATION STATE ==========
+# SEC-02 Remediation: Capture invitation token from query params, store temporarily in session state,
+# and immediately clear query parameters to prevent token exposure in the browser URL bar.
+if "token" in st.query_params or st.query_params.get("page") == "accept_invite":
+    extracted_token = st.query_params.get("token")
+    if extracted_token:
+        st.session_state["invitation_token"] = extracted_token
+    st.session_state.current_page = "accept_invite"
+    st.query_params.clear()
+elif "current_page" not in st.session_state:
+    query_page = st.query_params.get("page", "landing")
+    st.session_state.current_page = "dashboard" if query_page == "dashboard" else "landing"
+
+def switch_to_dashboard():
+    st.session_state.pop("invitation_token", None)
+    st.session_state.current_page = "dashboard"
+    st.query_params["page"] = "dashboard"
+    st.rerun()
+
+def switch_to_landing():
+    st.session_state.pop("invitation_token", None)
+    st.session_state.is_monitoring = False
+    st.session_state.current_page = "landing"
+    st.query_params["page"] = "landing"
+    st.rerun()
+
+def switch_to_login(message: str = None):
+    st.session_state.pop("invitation_token", None)
+    st.session_state.current_page = "login"
+    st.query_params["page"] = "login"
+    if message:
+        st.session_state["auth_flash_message"] = message
+    st.rerun()
+
+def switch_to_auth_home():
+    st.session_state.pop("invitation_token", None)
+    st.session_state.current_page = "authenticated_home"
+    st.query_params["page"] = "authenticated_home"
+    st.rerun()
+
+def handle_logout():
+    # Cleanly stop any running tenant camera managers and release hardware locks
+    for k in list(st.session_state.keys()):
+        if k.startswith("tenant_multi_cam_") or k == "multi_cam":
+            try:
+                if st.session_state[k] is not None:
+                    st.session_state[k].stop_all_cameras()
+            except Exception:
+                pass
+            st.session_state.pop(k, None)
+
+    token = st.session_state.get("auth_token")
+    if token:
+        try:
+            auth_service.revoke_session(token)
+        except Exception:
+            pass
+    st.session_state.pop("auth_token", None)
+    st.session_state.pop("auth_user", None)
+    st.session_state.pop("active_org", None)
+    st.session_state.pop("active_membership", None)
+    st.session_state.pop("invitation_token", None)
+    switch_to_landing()
+
+# Sidebar Navigation Switcher
+st.sidebar.markdown("### 🧭 Platform Navigation")
+
+if is_authenticated():
+    active_op = st.session_state["auth_user"]
+    st.sidebar.markdown(f"""
+    <div style="background:rgba(37,99,235,0.18); border:1px solid rgba(0,217,255,0.3); border-radius:8px; padding:8px 12px; margin-bottom:12px; font-family:var(--cp-font-mono); font-size:0.75rem;">
+        👤 <strong>{active_op.username}</strong><br>
+        <span style="color:#00D9FF;">ROLE: {active_op.role}</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    nav_default_idx = 0 if st.session_state.current_page == "landing" else 1
+    nav_selection = st.sidebar.radio(
+        "Select View:",
+        ["🏠 Home / Landing Page", "🏢 Organization Workspaces"],
+        index=nav_default_idx
+    )
+    if st.session_state.current_page in ("landing", "authenticated_home"):
+        if "Landing" in nav_selection and st.session_state.current_page != "landing":
+            switch_to_landing()
+        elif "Organization" in nav_selection and st.session_state.current_page != "authenticated_home":
+            switch_to_auth_home()
+        
+    if st.sidebar.button("🔒 Sign Out / Revoke Session", key="sidebar_logout_btn", use_container_width=True):
+        handle_logout()
+else:
+    nav_default_idx = 0 if st.session_state.current_page == "landing" else 1
+    nav_selection = st.sidebar.radio(
+        "Select View:",
+        ["🏠 Home / Landing Page", "🚨 Live Monitoring Dashboard"],
+        index=nav_default_idx
+    )
+    target_page = "landing" if "Landing" in nav_selection else "dashboard"
+    if st.session_state.current_page in ("landing", "dashboard") and target_page != st.session_state.current_page:
+        if target_page == "landing":
+            switch_to_landing()
+        else:
+            switch_to_dashboard()
+
+st.sidebar.divider()
+
+# ========== CONDITIONAL VIEW RENDERING ==========
+if st.session_state.current_page == "accept_invite":
+    raw_token = st.session_state.get("invitation_token") or st.query_params.get("token", "")
+    render_invitation_acceptance_view(
+        invitation_service=invitation_service,
+        auth_service=auth_service,
+        raw_token=raw_token,
+        on_success=lambda org: (
+            st.session_state.pop("invitation_token", None),
+            st.query_params.clear(),
+            st.session_state.update({"active_org": org, "org_view_mode": "workspace"}),
+            switch_to_auth_home()
+        ),
+        on_cancel=lambda: (
+            st.session_state.pop("invitation_token", None),
+            st.query_params.clear(),
+            switch_to_landing()
+        )
+    )
+    st.stop()
+
+if st.session_state.current_page == "landing":
+    # Sidebar quick launch & specs
+    if st.sidebar.button("🚀 Launch Dashboard", key="sidebar_landing_launch_btn", use_container_width=True, type="primary"):
+        switch_to_dashboard()
+
+    st.sidebar.markdown("""
+    #### 🛡️ CrowdPatrol System
+    - 🟢 **AI Engine:** YOLOv8 + DeepSORT
+    - 👥 **Detection:** Persons & Overhead Heads
+    - 📡 **Cloud Sync:** Firebase RTDB Active
+    - 📧 **Alerts:** Automated SMTP
+    - ⚡ **FPS:** 30+ Real-Time Target
+    """)
+    st.sidebar.divider()
+    st.sidebar.markdown("""
+    #### 📌 Quick Page Sections
+    - [Home](#hero)
+    - [Features](#features)
+    - [How It Works](#how-it-works)
+    - [Technology](#technology)
+    - [Applications](#applications)
+    - [About](#about)
+    """)
+    st.sidebar.caption("CrowdPatrol v2.5 | AMC Engineering College")
+
+    # Render landing page main content
+    render_landing_page(on_launch=switch_to_dashboard)
+    st.stop()
+
+if st.session_state.current_page == "login":
+    if is_authenticated():
+        switch_to_auth_home()
+    render_login_view(
+        auth_service,
+        on_success=lambda u, t: switch_to_auth_home(),
+        on_cancel=switch_to_landing,
+        auth_message=st.session_state.pop("auth_flash_message", None),
+        invitation_service=invitation_service
+    )
+    st.stop()
+
+if st.session_state.current_page == "authenticated_home":
+    if not is_authenticated():
+        switch_to_login("Authentication required to access operator workspace.")
+
+    current_user = st.session_state["auth_user"]
+    view_mode = st.session_state.get("org_view_mode", "workspace")
+
+    # Platform administrator view
+    if view_mode == "platform_admin" and is_platform_admin(current_user):
+        render_platform_admin_orgs(
+            user=current_user,
+            org_service=org_service,
+            on_return=lambda: (
+                st.session_state.update({"org_view_mode": "selector"}),
+                st.rerun()
+            )
+        )
+        st.stop()
+
+    # Active organization workspace
+    active_org = st.session_state.get("active_org")
+    if active_org and view_mode == "workspace":
+        try:
+            resolved_org, resolved_mem = resolve_tenant_context(
+                user=current_user,
+                requested_org_id=active_org.id,
+                db=org_service.db
+            )
+            st.session_state["active_org"] = resolved_org
+            st.session_state["active_membership"] = resolved_mem
+            def _clean_switch_org():
+                for k in list(st.session_state.keys()):
+                    if k.startswith("tenant_multi_cam_"):
+                        try:
+                            if st.session_state[k] is not None:
+                                st.session_state[k].stop_all_cameras()
+                        except Exception:
+                            pass
+                        st.session_state.pop(k, None)
+                st.session_state.pop("active_org", None)
+                st.session_state.pop("active_membership", None)
+                st.session_state.update({"org_view_mode": "selector"})
+                st.rerun()
+
+            render_org_workspace(
+                user=current_user,
+                organization=resolved_org,
+                membership=resolved_mem,
+                org_service=org_service,
+                member_service=member_service,
+                invitation_service=invitation_service,
+                on_switch_org=_clean_switch_org,
+                on_logout=handle_logout,
+                tenant_op_service=tenant_op_service
+            )
+            st.stop()
+        except PermissionError as pe:
+            st.warning(f"Organization access notice: {pe}")
+            st.session_state.pop("active_org", None)
+            st.session_state.pop("active_membership", None)
+
+    # Organization selector view
+    def _clean_select_org(org, mem):
+        for k in list(st.session_state.keys()):
+            if k.startswith("tenant_multi_cam_"):
+                try:
+                    if st.session_state[k] is not None:
+                        st.session_state[k].stop_all_cameras()
+                except Exception:
+                    pass
+                st.session_state.pop(k, None)
+        st.session_state.update({
+            "active_org": org,
+            "active_membership": mem,
+            "org_view_mode": "workspace"
+        })
+        st.rerun()
+
+    render_org_selector(
+        user=current_user,
+        org_service=org_service,
+        on_select_org=_clean_select_org,
+        on_platform_admin=lambda: (
+            st.session_state.update({"org_view_mode": "platform_admin"}),
+            st.rerun()
+        ),
+        on_logout=handle_logout
+    )
+    st.stop()
+
+if st.session_state.current_page == "dashboard":
+    if not is_authenticated():
+        # STRICT AUTHENTICATION GUARD: Reject unauthenticated access to the operational dashboard
+        if st.sidebar.button("🏠 ← Return to Landing Page", key="sidebar_dashboard_return_btn", use_container_width=True):
+            switch_to_landing()
+        render_login_view(
+            auth_service,
+            on_success=lambda u, t: switch_to_auth_home(),
+            on_cancel=switch_to_landing,
+            auth_message="🔒 Authentication Required: Direct access to the live monitoring dashboard is restricted. Please sign in with your authorized credentials."
+        )
+        st.stop()
+    else:
+        # Route authenticated users into the organization workspace
+        switch_to_auth_home()
+
+# If execution continues past here (Phase 2B+), user is in the Monitoring Dashboard view
+if st.sidebar.button("🏠 ← Return to Landing Page", key="sidebar_dashboard_return_btn", use_container_width=True):
+    switch_to_landing()
+
 st.title("🚨 CrowdPatrol - Autonomous Crowd Monitoring Dashboard")
 
 st.caption("ℹ️ **Academic Prototype Notice**: CrowdPatrol is an experimental prototype for automated crowd density and motion-anomaly monitoring. System output represents relative metric indications for tested benchmark scenarios.")
@@ -107,27 +517,118 @@ preview_resolution = (1280, 720)
 if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     input_type = st.sidebar.selectbox(
         "Select Input Source:",
-        ["📷 Live Webcam", "📁 Upload Video File", "🎥 Benchmark Sample Video", "🔗 Video Path / RTSP URL"]
+        [
+            "💻 Built-in Laptop Webcam (Device 0)",
+            "🔌 External USB Webcam (Device 1)",
+            "📱 Phone Camera — Windows Connected Device (Phone Link / Virtual Webcam)",
+            "🌐 Phone Camera — IP / Wi-Fi Stream (IP Webcam / DroidCam / RTSP)",
+            "📁 Upload Video File",
+            "🎥 Benchmark Sample Video",
+            "🔗 Video Path / RTSP URL"
+        ]
     )
     
-    if input_type == "📷 Live Webcam":
+    if input_type == "💻 Built-in Laptop Webcam (Device 0)":
+        webcam_idx = 0
+        st.sidebar.caption("Using Device Index `0` (Built-in Integrated Camera)")
+        if st.sidebar.button("🔍 Test Camera (Device 0)", key="test_laptop_cam", use_container_width=True):
+            ok, msg, res = test_camera_source(0)
+            if ok:
+                st.sidebar.success(f"🟢 {msg}")
+            else:
+                st.sidebar.error(f"🔴 {msg}")
+        video_source = 0
+    elif input_type == "🔌 External USB Webcam (Device 1)":
+        webcam_idx = 1
+        st.sidebar.caption("Using Device Index `1` (External USB Webcam)")
+        if st.sidebar.button("🔍 Test Camera (Device 1)", key="test_usb_cam", use_container_width=True):
+            ok, msg, res = test_camera_source(1)
+            if ok:
+                st.sidebar.success(f"🟢 {msg}")
+            else:
+                st.sidebar.error(f"🔴 {msg}")
+        video_source = 1
+    elif input_type == "📱 Phone Camera — Windows Connected Device (Phone Link / Virtual Webcam)":
+        st.sidebar.markdown("#### 📱 Windows Connected Phone Camera")
         discovered_devs = cached_discover_camera_devices()
-        if discovered_devs:
-            options_labels = [d.display_name for d in discovered_devs]
-            selected_label = st.sidebar.selectbox("📷 Camera Device", options_labels, index=0)
-            selected_dev = next((d for d in discovered_devs if d.display_name == selected_label), discovered_devs[0])
+        virt_devs = [d for d in discovered_devs if d.is_virtual or "virtual" in d.name.lower() or "phone" in d.name.lower()]
+        target_devs = virt_devs if virt_devs else discovered_devs
+
+        if target_devs:
+            options_labels = [d.display_name for d in target_devs]
+            selected_label = st.sidebar.selectbox("📱 Connected Device:", options_labels, index=0, key="win_phone_dev_sel")
+            selected_dev = next((d for d in target_devs if d.display_name == selected_label), target_devs[0])
             webcam_idx = selected_dev.index
-            st.sidebar.caption(f"Index: `{webcam_idx}` | Resolution: `{selected_dev.resolution}` | Status: `{selected_dev.status}`")
+            st.sidebar.caption(f"Device: `{selected_dev.name}` | Index: `{webcam_idx}` | Virtual: `{selected_dev.is_virtual}`")
         else:
-            webcam_idx = st.sidebar.number_input("Manual Device Index", min_value=0, max_value=10, value=0)
-            
-        if st.sidebar.button("🔍 Test Camera", key="test_mode1_cam", use_container_width=True):
+            webcam_idx = st.sidebar.number_input("Virtual Camera Index", min_value=0, max_value=10, value=2, key="win_phone_idx_in")
+
+        with st.sidebar.expander("ℹ️ Windows Phone Link / USB Setup:", expanded=False):
+            st.markdown("""
+            1. **Windows 11 Connected Camera (Phone Link)**: Open *Settings > Bluetooth & devices > Mobile devices* and enable 'Use as a connected camera'.
+            2. **USB Virtual Webcams**: Android 14+ USB Webcam mode, DroidCam Client, Iriun Webcam, or Camo create virtual video devices registered directly in Windows.
+            3. Select the camera device above and click **Test Device** to verify frame capture.
+            """)
+
+        if st.sidebar.button("🔍 Test Connected Camera", key="test_win_phone_cam", use_container_width=True):
             ok, msg, res = test_camera_source(webcam_idx)
             if ok:
                 st.sidebar.success(f"🟢 {msg}")
             else:
                 st.sidebar.error(f"🔴 {msg}")
         video_source = webcam_idx
+    elif input_type == "🌐 Phone Camera — IP / Wi-Fi Stream (IP Webcam / DroidCam / RTSP)":
+        st.sidebar.markdown("#### 📱 Phone Camera Connection Setup")
+        phone_app = st.sidebar.selectbox(
+            "Phone Camera App:",
+            [
+                "📱 Android IP Webcam (http://<IP>:8080/video)",
+                "📱 DroidCam (http://<IP>:4747/video)",
+                "📱 Iriun Webcam (http://<IP>:8080)",
+                "🌐 Custom HTTP / RTSP Stream URL"
+            ],
+            key="direct_phone_app_sel"
+        )
+        
+        default_port = 8080
+        default_ep = "video"
+        if "DroidCam" in phone_app:
+            default_port = 4747
+            default_ep = "video"
+        elif "Iriun" in phone_app:
+            default_port = 8080
+            default_ep = ""
+            
+        if "Custom" not in phone_app:
+            col_ip, col_port = st.sidebar.columns([2, 1])
+            with col_ip:
+                phone_ip_val = st.text_input("Phone IP Address:", value="192.168.1.100", key="direct_phone_ip_in", help="Enter the IP address displayed on your phone camera app")
+            with col_port:
+                phone_port_val = st.number_input("Port:", min_value=1, max_value=65535, value=default_port, key="direct_phone_port_in")
+            
+            raw_url = build_phone_stream_url(phone_ip_val, port=int(phone_port_val), endpoint=default_ep)
+            phone_stream_url = st.sidebar.text_input("Stream URL:", value=raw_url, key="direct_phone_url_in")
+        else:
+            phone_stream_url = st.sidebar.text_input("Stream URL:", value="http://192.168.1.100:8080/video", key="direct_phone_custom_in")
+            
+        with st.sidebar.expander("ℹ️ Phone Camera Setup Instructions:", expanded=False):
+            st.markdown("""
+            1. **Same Wi-Fi**: Connect laptop and smartphone to the same Wi-Fi router or hotspot.
+            2. **Free App**: Install **IP Webcam** (Android) or **DroidCam** (Android/iOS).
+            3. **Start Stream**: In the phone app, scroll to bottom and tap *Start Server*.
+            4. **Enter IP**: Copy the IPv4 address shown on phone (e.g., `192.168.1.45`) above.
+            5. **Test**: Click *Test Phone Stream* below to verify live frame reception.
+            """)
+            
+        if st.sidebar.button("🔍 Test Phone Stream", key="test_direct_phone_btn", use_container_width=True):
+            with st.spinner("Probing phone camera stream..."):
+                ok, msg, res, conn_status = verify_stream_source(phone_stream_url, timeout_sec=4.0)
+                if ok:
+                    st.sidebar.success(f"🟢 {msg} (Status: {conn_status})")
+                else:
+                    st.sidebar.error(f"🔴 {msg} (Status: {conn_status})")
+                    
+        video_source = phone_stream_url
     elif input_type == "📁 Upload Video File":
         uploaded_file = st.sidebar.file_uploader("Upload Video File", type=["mp4", "avi", "mov", "mkv"])
         if uploaded_file is not None:
@@ -185,19 +686,32 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     device = st.sidebar.radio("Execution Device:", ["cpu", "cuda"], horizontal=True)
     enable_alerts = st.sidebar.checkbox("Sync Firebase Alerts", value=False)
     
+    notif_dispatcher = get_notification_dispatcher()
     if "direct_alert_manager" not in st.session_state:
-        st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True)
+        st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True, notification_dispatcher=notif_dispatcher)
     direct_alert_mgr = st.session_state.direct_alert_manager
+    direct_alert_mgr.attach_notification_dispatcher(notif_dispatcher)
     
     enable_sound_alarm = st.sidebar.checkbox("🔔 Enable Emergency Alarm Sound", value=True, key="direct_sound_alarm")
     
     active_direct_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
-    if active_direct_alt is not None and not active_direct_alt.acknowledged:
-        st.sidebar.warning(f"🚨 ACTIVE EMERGENCY: {active_direct_alt.risk_level} ({active_direct_alt.risk_score:.1f})")
-        if st.sidebar.button("🔔 ACKNOWLEDGE ALERT (DIRECT-01)", key="ack_btn_direct_01", use_container_width=True):
-            direct_alert_mgr.acknowledge_alert("DIRECT-01", operator_id="DirectStreamOperator")
-            st.sidebar.success("Alert Acknowledged for DIRECT-01!")
-            st.rerun()
+    if active_direct_alt is not None:
+        sev = getattr(active_direct_alt, "severity", active_direct_alt.risk_level)
+        st.sidebar.warning(f"🚨 ACTIVE {sev}: {active_direct_alt.risk_score:.1f}")
+        col_act1, col_act2 = st.sidebar.columns(2)
+        with col_act1:
+            if not active_direct_alt.acknowledged:
+                if st.sidebar.button("🔔 Ack", key="ack_btn_direct_01", use_container_width=True):
+                    direct_alert_mgr.acknowledge_alert("DIRECT-01", operator_id="DirectStreamOperator")
+                    st.sidebar.success("Alert Acknowledged!")
+                    st.rerun()
+            else:
+                st.sidebar.caption(f"✓ Ack by {active_direct_alt.acknowledged_by or 'Operator'}")
+        with col_act2:
+            if st.sidebar.button("✅ Resolve", key="res_btn_direct_01", use_container_width=True):
+                direct_alert_mgr.resolve_alert("DIRECT-01", operator_id="DirectStreamOperator", note="Resolved via dashboard")
+                st.sidebar.success("Alert Resolved!")
+                st.rerun()
     
     st.sidebar.divider()
     col_start, col_stop = st.sidebar.columns(2)
@@ -227,7 +741,7 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
             cam_enabled = st.checkbox("Enable Camera Feed", value=cam_item.get("enabled", True), key=f"en_{cam_id}")
             cam_name = st.text_input("Camera Name", value=cam_item.get("name", cam_id), key=f"name_{cam_id}")
             
-            src_type_options = ["📁 Preset Recorded Video", "📤 Upload Video", "📷 Webcam", "🌐 IP Camera / RTSP"]
+            src_type_options = ["📁 Preset Recorded Video", "📤 Upload Video", "📷 Webcam", "📱 Phone Camera (Wi-Fi / IP)", "🌐 IP Camera / RTSP"]
             curr_type = cam_item.get("source_type", "video")
             curr_src_str = str(cam_item.get("source", ""))
             
@@ -238,8 +752,10 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                     type_idx = 0
             elif curr_type == "webcam":
                 type_idx = 2
-            else:
+            elif curr_type in ("phone", "phone_ip"):
                 type_idx = 3
+            else:
+                type_idx = 4
             
             sel_type_str = st.selectbox("Source Type", src_type_options, index=type_idx, key=f"stype_{cam_id}")
             
@@ -339,10 +855,34 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                         st.success(f"🟢 {msg}")
                     else:
                         st.error(f"🔴 {msg}")
+            elif "Phone Camera" in sel_type_str:
+                new_src_type = "phone"
+                phone_def_url = curr_src_str if curr_src_str.startswith("http") else "http://192.168.1.100:8080/video"
+                new_source = st.text_input(
+                    f"Phone Stream URL ({cam_id}):",
+                    value=phone_def_url,
+                    key=f"src_phone_{cam_id}",
+                    help="e.g. http://192.168.1.50:8080/video (IP Webcam) or http://192.168.1.50:4747/video (DroidCam)"
+                )
+                new_dev_name = f"Phone Camera ({cam_id})"
+                if st.button(f"🔍 Test Phone Stream ({cam_id})", key=f"test_phone_{cam_id}", use_container_width=True):
+                    with st.spinner("Probing stream..."):
+                        ok, msg, res, conn_status = verify_stream_source(new_source, timeout_sec=4.0)
+                        if ok:
+                            st.success(f"🟢 {msg} (Status: {conn_status})")
+                        else:
+                            st.error(f"🔴 {msg} (Status: {conn_status})")
             else:
                 new_src_type = "rtsp"
                 new_source = st.text_input("RTSP Stream URL", value=str(cam_item.get("source", "rtsp://192.168.1.100:554/live")), key=f"src_rtsp_{cam_id}")
                 new_dev_name = None
+                if st.button(f"🔍 Test RTSP Stream ({cam_id})", key=f"test_rtsp_{cam_id}", use_container_width=True):
+                    with st.spinner("Probing RTSP stream..."):
+                        ok, msg, res, conn_status = verify_stream_source(new_source, timeout_sec=4.0)
+                        if ok:
+                            st.success(f"🟢 {msg} (Status: {conn_status})")
+                        else:
+                            st.error(f"🔴 {msg} (Status: {conn_status})")
                 
             updated_cameras.append({
                 "id": cam_id,
@@ -393,6 +933,26 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     device = st.sidebar.radio("Execution Device:", ["cpu", "cuda"], horizontal=True)
     enable_alerts = st.sidebar.checkbox("Sync Firebase Alerts", value=False)
     enable_sound_alarm = st.sidebar.checkbox("🔔 Enable Emergency Alarm Sound", value=True)
+    
+    if "multi_cam" in st.session_state and st.session_state.multi_cam and st.session_state.multi_cam.alert_manager:
+        cctv_active = st.session_state.multi_cam.get_active_alerts()
+        if cctv_active:
+            st.sidebar.markdown("### 🚨 Active CCTV Alerts")
+            for a in cctv_active:
+                sev = getattr(a, "severity", a.risk_level)
+                st.sidebar.caption(f"**{a.camera_id}** ({a.camera_name}) — {sev} ({a.risk_score:.1f})")
+                col_c1, col_c2 = st.sidebar.columns([1, 1])
+                with col_c1:
+                    if not a.acknowledged:
+                        if st.sidebar.button(f"🔔 Ack {a.camera_id}", key=f"btn_ack_{a.camera_id}_{a.alert_id}", use_container_width=True):
+                            st.session_state.multi_cam.acknowledge_alert(a.camera_id, operator_id="CCTVOperator")
+                            st.rerun()
+                    else:
+                        st.sidebar.caption(f"✓ Ack by {a.acknowledged_by or 'Operator'}")
+                with col_c2:
+                    if st.sidebar.button(f"✅ Resolve {a.camera_id}", key=f"btn_res_{a.camera_id}_{a.alert_id}", use_container_width=True):
+                        st.session_state.multi_cam.alert_manager.resolve_alert(a.camera_id, operator_id="CCTVOperator", note="Resolved via dashboard")
+                        st.rerun()
     
     st.sidebar.divider()
     col_start, col_stop = st.sidebar.columns(2)
@@ -446,8 +1006,41 @@ with chart_col1:
 with chart_col2:
     person_chart = st.empty()
 
-st.subheader("🚨 Alerts & Event Log")
+st.subheader("🚨 Automated Alert Management & Event Feed")
+alert_summary_placeholder = st.empty()
 alerts_placeholder = st.empty()
+history_expander = st.expander("📜 Historical Alert Ledger", expanded=False)
+history_placeholder = history_expander.empty()
+
+notif_dispatcher = get_notification_dispatcher()
+
+notif_expander = st.expander("📬 Notification Delivery System (Email & SMS)", expanded=False)
+with notif_expander:
+    notif_status_ph = st.empty()
+    st.markdown("##### 🧪 Explicit Test Notifications")
+    t_col1, t_col2 = st.columns(2)
+    with t_col1:
+        test_email_target = st.text_input("Test Email Recipient (Optional):", key="test_email_target_inp", placeholder="operator@example.com")
+        if st.button("📧 Send Test Email", key="btn_send_test_email"):
+            with st.spinner("Transmitting test email..."):
+                ok_em, msg_em = notif_dispatcher.send_test_email(to_email=test_email_target if test_email_target else None)
+                if ok_em:
+                    st.success(msg_em)
+                else:
+                    st.error(msg_em)
+    with t_col2:
+        test_sms_target = st.text_input("Test SMS Recipient (Optional):", key="test_sms_target_inp", placeholder="+1234567890")
+        if st.button("📱 Send Test SMS", key="btn_send_test_sms"):
+            with st.spinner("Transmitting test SMS..."):
+                ok_sms, msg_sms = notif_dispatcher.send_test_sms(to_phone=test_sms_target if test_sms_target else None)
+                if ok_sms:
+                    st.success(msg_sms)
+                else:
+                    st.error(msg_sms)
+    st.markdown("##### 📜 Delivery Log")
+    notif_history_ph = st.empty()
+
+render_dashboard_notifications(notif_dispatcher, notif_status_ph, notif_history_ph)
 
 # ========== DATA FETCHING FOR REMOTE STREAM MODE ==========
 def fetch_telemetry_data():
@@ -511,24 +1104,26 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                 
                 head_model_path = "models/crowdpatrol_yolov8n_head_v4.pt" if os.path.exists("models/crowdpatrol_yolov8n_head_v4.pt") else DEFAULT_HEAD_MODEL_PATH
                 detector = ExperimentalHeadDetector(model_path=head_model_path, confidence=confidence, device=device)
-                tracker = PersonTracker(max_age=30)
+                tracker = PersonTracker(max_age=15, n_init=1)
                 density_estimator = HeadDensityEstimator(grid_size=(4, 4))
-                motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4))
+                motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4), flow_interval=2)
                 risk_adapter = ExperimentalHeadRiskAdapter()
                 risk_assessor = None
             else:
-                detector = PersonDetector(model_path=model_type, confidence=confidence, device=device)
+                detector = PersonDetector(model_path=model_type, confidence=confidence, device=device, imgsz=480)
                 tracker = PersonTracker(max_age=30)
                 density_estimator = DensityEstimator(grid_size=(4, 4))
-                motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4))
+                motion_analyzer = CrowdMotionAnalyzer(grid_size=(4, 4), flow_interval=2)
                 risk_assessor = RiskAssessor()
                 risk_adapter = None
                 
             metrics_logger = MetricsLogger()
             
             if "direct_alert_manager" not in st.session_state:
-                st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True)
+                st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True, notification_dispatcher=notif_dispatcher)
             direct_alert_mgr = st.session_state.direct_alert_manager
+            if not direct_alert_mgr.notification_dispatcher and notif_dispatcher:
+                direct_alert_mgr.attach_notification_dispatcher(notif_dispatcher)
             
             alert_manager = None
             if enable_alerts and fb_initialized:
@@ -538,12 +1133,17 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     pass
             
             frame_count = 0
-            fps_deque = deque(maxlen=30)
+            from src.capture import FPSTracker
+            source_fps = float(cap.get(cv2.CAP_PROP_FPS))
+            if source_fps <= 0 or np.isnan(source_fps):
+                source_fps = 30.0
+            fps_tracker = FPSTracker(window_size=30, source_fps=source_fps)
             current_tracks = []
             last_firebase_update = 0
             
             try:
                 while st.session_state.is_monitoring:
+                    fps_tracker.start_frame()
                     t_start = time.perf_counter()
                     ret, frame = cap.read()
                     if not ret:
@@ -552,10 +1152,11 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         break
                     
                     frame_count += 1
+                    is_detect_frame = (frame_count == 1 or frame_count % detect_interval == 0)
                     
                     if detection_mode == "🗣️ Head Mode — Experimental":
                         # Detection & DeepSORT head tracking
-                        if frame_count == 1 or (frame_count % detect_interval == 0):
+                        if is_detect_frame:
                             detections = detector.detect(frame, tiled=tiled_mode)
                             current_tracks = tracker.update(detections, frame)
                         else:
@@ -590,13 +1191,25 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         growth_rate = 0.0
                         raw_risk_score = risk_info.get("raw_score", combined_score)
                         
+                        # Display-Resolution Optimization for Heatmap & HUD (Preserves Native Detection/Tracking)
+                        need_render_scale = (preview_resolution is not None and (frame.shape[1], frame.shape[0]) != preview_resolution)
+                        if need_render_scale:
+                            render_frame = cv2.resize(frame, preview_resolution)
+                            sx = preview_resolution[0] / frame.shape[1]
+                            sy = preview_resolution[1] / frame.shape[0]
+                            render_tracks = [[t[0]*sx, t[1]*sy, t[2]*sx, t[3]*sy] + list(t[4:]) for t in visible_tracks]
+                        else:
+                            render_frame = frame
+                            render_tracks = visible_tracks
+
                         # Thermal heatmap background layer (from visible heads)
-                        heatmap_base, _ = generate_heatmap(frame, visible_tracks, draw_grid=False)
+                        heatmap_base, _ = generate_heatmap(render_frame, render_tracks, draw_grid=False)
                         
                         # Head Mode HUD Annotations (drawing visible tracks only)
                         annotated_frame = FrameAnnotator.create_head_dashboard_frame(
                             heatmap_base,
                             {
+                                "camera_id": "DIRECT-01",
                                 "visible_heads": visible_heads,
                                 "person_count": active_head_tracks,
                                 "density": max_density,
@@ -604,16 +1217,17 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                                 "avg_speed": avg_speed,
                                 "dominant_direction": dominant_dir,
                                 "risk": risk_level_str,
-                                "combined_score": combined_score
+                                "combined_score": combined_score,
+                                "fps": fps_tracker.rolling_fps
                             },
                             density_map,
                             grid_size=(4, 4),
                             grid_matrix=grid_matrix,
-                            tracks=visible_tracks
+                            tracks=render_tracks
                         )
                     else:
                         # Detection & DeepSORT person tracking
-                        if frame_count == 1 or (frame_count % detect_interval == 0):
+                        if is_detect_frame:
                             detections = detector.detect(frame)
                             current_tracks = tracker.update(detections, frame)
                         else:
@@ -647,8 +1261,19 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         growth_rate = risk_res.get("growth_rate", 0.0)
                         raw_risk_score = risk_res.get("raw_score", combined_score)
                         
+                        # Display-Resolution Optimization for Heatmap & HUD (Preserves Native Detection/Tracking)
+                        need_render_scale = (preview_resolution is not None and (frame.shape[1], frame.shape[0]) != preview_resolution)
+                        if need_render_scale:
+                            render_frame = cv2.resize(frame, preview_resolution)
+                            sx = preview_resolution[0] / frame.shape[1]
+                            sy = preview_resolution[1] / frame.shape[0]
+                            render_tracks = [[t[0]*sx, t[1]*sy, t[2]*sx, t[3]*sy] + list(t[4:]) for t in current_tracks]
+                        else:
+                            render_frame = frame
+                            render_tracks = current_tracks
+
                         # Thermal heatmap background layer
-                        heatmap_base, _ = generate_heatmap(frame, current_tracks, draw_grid=False)
+                        heatmap_base, _ = generate_heatmap(render_frame, render_tracks, draw_grid=False)
                         
                         # Standard Person Mode Annotations
                         annotated_frame = FrameAnnotator.create_dashboard_frame(
@@ -662,19 +1287,16 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                                 "dominant_direction": dominant_dir,
                                 "risk": risk_level_str,
                                 "combined_score": combined_score,
-                                "fps": float(np.mean(fps_deque)) if fps_deque else 0.0
+                                "fps": fps_tracker.rolling_fps
                             },
                             density_map,
                             grid_size=(4, 4),
                             grid_matrix=grid_matrix,
-                            tracks=current_tracks
+                            tracks=render_tracks
                         )
                     
-                    t_end = time.perf_counter()
-                    frame_ms = (t_end - t_start) * 1000.0
-                    current_fps = 1000.0 / frame_ms if frame_ms > 0 else 0.0
-                    fps_deque.append(current_fps)
-                    avg_fps = float(np.mean(fps_deque))
+                    avg_fps = fps_tracker.end_frame()
+                    current_fps = fps_tracker.current_fps
                     
                     # Log to CSV
                     if detection_mode == "🗣️ Head Mode — Experimental":
@@ -765,37 +1387,9 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     else:
                         system_banner.empty()
 
-                    # Render Alerts & Event Log Panel for DIRECT-01
-                    if active_direct_alt:
-                        alt = active_direct_alt
-                        if alt.risk_level == "HIGH" and not alt.acknowledged:
-                            b_col, bg_col = "#ff0000", "#3a0000"
-                            badge_lbl = f"🚨 HIGH-RISK SECURITY ALERT ({alt.risk_score:.1f})"
-                            ack_str = "<b>UNACKNOWLEDGED EMERGENCY</b>"
-                        elif alt.risk_level == "HIGH" and alt.acknowledged:
-                            b_col, bg_col = "#ff8800", "#2a1500"
-                            badge_lbl = f"⚠️ HIGH RISK — ACKNOWLEDGED ({alt.risk_score:.1f})"
-                            ack_str = f"<b>ACKNOWLEDGED</b> by {alt.acknowledged_by or 'Operator'}"
-                        else:
-                            b_col, bg_col = "#ffaa00", "#2a2000"
-                            badge_lbl = f"🟡 ELEVATED RISK ({alt.risk_score:.1f})"
-                            ack_str = "<b>ACTIVE WARNING</b>"
-                            
-                        alerts_placeholder.markdown(f"""
-                        <div style="background:{bg_col}; border:2px solid {b_col}; padding:12px; border-radius:8px; margin-bottom:10px;">
-                            <div style="color:{b_col}; font-weight:bold; font-size:1.1em;">{badge_lbl}</div>
-                            <div style="color:#fff; font-size:1.0em; margin-top:4px;">Risk Score: <b>{alt.risk_score:.1f}</b></div>
-                            <div style="color:#eee; font-size:0.9em; margin-top:2px;">Reason: <b>{alt.reason}</b></div>
-                            <div style="color:#aaa; font-size:0.82em; margin-top:4px;">Camera: <b>Direct Stream (DIRECT-01)</b> &nbsp;|&nbsp; State: {ack_str}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        alerts_placeholder.markdown("""
-                        <div style="background:#1a2e1a; border:2px solid #00ff88; padding:12px; border-radius:8px; margin-bottom:10px;">
-                            <div style="color:#00ff88; font-weight:bold; font-size:1.1em;">🟢 NORMAL</div>
-                            <div style="color:#eee; font-size:0.9em; margin-top:4px;">No active security alerts for Direct Stream (DIRECT-01).</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    # Render Automated Alert Management Feed & Summary for DIRECT-01
+                    render_dashboard_alerts(direct_alert_mgr, alert_summary_placeholder, alerts_placeholder, history_placeholder)
+                    render_dashboard_notifications(notif_dispatcher, notif_status_ph, notif_history_ph)
 
                     if alert_manager and (time.time() - last_firebase_update > 1.0):
                         alert_manager.update_dashboard_data(metrics_payload)
@@ -807,7 +1401,7 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     else:
                         display_frame = annotated_frame
 
-                    _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                    _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     video_placeholder.image(jpeg_buffer.tobytes(), use_container_width=True)
                     
                     # Update Session State History for Real-Time Charts
@@ -817,8 +1411,8 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     st.session_state.density_history.append(max_density)
                     st.session_state.time_history.append(current_time)
                     
-                    # Render Live Metrics Widgets (Throttled to every 2 frames for smooth web playback)
-                    if frame_count % 2 == 0:
+                    # Render Live Metrics Widgets (Throttled to every 3 frames for smooth web playback)
+                    if frame_count % 3 == 0:
                         cam_text = "🎥 Camera Pan Active (Motion Excluded)" if cam_motion else "📷 Static Camera"
                         if detection_mode == "🗣️ Head Mode — Experimental":
                             status_box.warning(f"🗣️ EXPERIMENTAL HEAD RISK: {risk_level_str} | Score: {combined_score:.1f} | Visible Heads: {visible_heads} | Active Tracks: {active_head_tracks} | {cam_text}")
@@ -853,26 +1447,39 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         speed_metric.metric("🏃 Avg Speed", f"{avg_speed:.1f} px/f ({dominant_dir})")
                         anomaly_metric.metric("⚠️ Anomaly Score", f"{anomaly_score:.2f}")
                         quality_bar.progress(min(max(0.0, data_quality_score), 1.0), text=f"Data Quality ({data_quality_score*100:.0f}%)")
-                        fps_metric.metric("⚡ Pipeline FPS", f"{avg_fps:.1f}")
+                        fps_metric.metric("⚡ Pipeline FPS", f"{avg_fps:.1f}", delta=f"Src: {source_fps:.0f} FPS", delta_color="off")
                     
-                    # OPTIMIZATION 2: Throttled Chart Updates (Every 10 Frames) to Prevent Browser UI Freeze
-                    if frame_count % 10 == 0 and len(st.session_state.time_history) > 1:
-                        df1 = pd.DataFrame({
-                            "Time": list(st.session_state.time_history),
-                            "Risk Score": list(st.session_state.risk_history)
-                        })
-                        risk_chart.line_chart(df1.set_index("Time"), height=200)
+                    # OPTIMIZATION: Throttled Chart Updates (Every 20 Frames) to Prevent Browser UI Freeze
+                    if frame_count % 20 == 0 and len(st.session_state.time_history) > 1:
+                        fig_risk = create_risk_chart(
+                            list(st.session_state.time_history),
+                            list(st.session_state.risk_history)
+                        )
+                        risk_chart.plotly_chart(fig_risk, use_container_width=True)
                         
                         count_chart_label = "Heads" if detection_mode == "🗣️ Head Mode — Experimental" else "Persons"
-                        df2 = pd.DataFrame({
-                            "Time": list(st.session_state.time_history),
-                            count_chart_label: list(st.session_state.person_history),
-                            "Max Density": list(st.session_state.density_history)
-                        })
-                        person_chart.line_chart(df2.set_index("Time"), height=200)
+                        fig_person = create_person_density_chart(
+                            list(st.session_state.time_history),
+                            list(st.session_state.person_history),
+                            list(st.session_state.density_history),
+                            person_label=count_chart_label
+                        )
+                        person_chart.plotly_chart(fig_person, use_container_width=True)
                     
-                    # Yield slightly for Streamlit GUI thread responsiveness
-                    time.sleep(0.001)
+                    # Adaptive frame cadence smoothing (smooths burst-and-stall without adding artificial latency)
+                    frame_elapsed = time.perf_counter() - t_start
+                    if "rolling_cadence" not in st.session_state:
+                        st.session_state.rolling_cadence = frame_elapsed
+                    else:
+                        st.session_state.rolling_cadence = 0.85 * st.session_state.rolling_cadence + 0.15 * frame_elapsed
+                    
+                    target_pace = st.session_state.rolling_cadence
+                    # Only smooth on intermediate skipped frames when running faster than average pace
+                    if not is_detect_frame and frame_elapsed < target_pace:
+                        pace_sleep = min(max(0.001, target_pace - frame_elapsed), 0.030)
+                    else:
+                        pace_sleep = 0.001
+                    time.sleep(pace_sleep)
                     
             finally:
                 cap.release()
@@ -919,30 +1526,57 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
         if mode_key == "HEAD":
             st.warning("⚠️ EXPERIMENTAL MODE — HEAD DETECTION ACTIVE across multi-camera streams.")
             
-        multi_cam = MultiCameraManager(
-            detection_mode=mode_key,
-            device=device,
-            detect_interval=detect_interval,
-            tiled_mode=tiled_mode
+        reinit_needed = (
+            "multi_cam" not in st.session_state
+            or st.session_state.get("multi_cam_mode") != mode_key
+            or st.session_state.get("multi_cam_device") != device
+            or st.session_state.get("multi_cam_detect_interval") != detect_interval
+            or st.session_state.get("multi_cam_tiled_mode") != tiled_mode
         )
-        st.session_state.multi_cam = multi_cam
+
+        if reinit_needed:
+            if "multi_cam" in st.session_state:
+                try:
+                    st.session_state.multi_cam.stop_all_cameras()
+                except Exception:
+                    pass
+            multi_cam = MultiCameraManager(
+                detection_mode=mode_key,
+                device=device,
+                detect_interval=detect_interval,
+                tiled_mode=tiled_mode
+            )
+            multi_cam.attach_notification_dispatcher(notif_dispatcher)
+            st.session_state.multi_cam = multi_cam
+            st.session_state.multi_cam_mode = mode_key
+            st.session_state.multi_cam_device = device
+            st.session_state.multi_cam_detect_interval = detect_interval
+            st.session_state.multi_cam_tiled_mode = tiled_mode
+            st.session_state.multi_cam_started = False
+        else:
+            multi_cam = st.session_state.multi_cam
+            multi_cam.attach_notification_dispatcher(notif_dispatcher)
         
         # Synchronize UI sidebar camera selections with MultiCameraManager before starting
-        ui_cams = st.session_state.get("current_ui_cameras", updated_cameras)
-        if ui_cams:
-            with open(config_path, "w") as f:
-                json.dump({"cameras": ui_cams}, f, indent=2)
-            for cam_item in ui_cams:
-                multi_cam.reconfigure_camera(
-                    cam_item["id"],
-                    cam_item["source"],
-                    source_type=cam_item["source_type"],
-                    name=cam_item["name"],
-                    device_name=cam_item.get("device_name"),
-                    enabled=cam_item["enabled"]
-                )
-        
-        online_count = multi_cam.start_all_cameras()
+        if not st.session_state.get("multi_cam_started", False):
+            ui_cams = st.session_state.get("current_ui_cameras", updated_cameras)
+            if ui_cams:
+                with open(config_path, "w") as f:
+                    json.dump({"cameras": ui_cams}, f, indent=2)
+                for cam_item in ui_cams:
+                    multi_cam.reconfigure_camera(
+                        cam_item["id"],
+                        cam_item["source"],
+                        source_type=cam_item["source_type"],
+                        name=cam_item["name"],
+                        device_name=cam_item.get("device_name"),
+                        enabled=cam_item["enabled"]
+                    )
+            online_count = multi_cam.start_all_cameras()
+            st.session_state.multi_cam_started = True
+            st.session_state.multi_cam_online_count = online_count
+        else:
+            online_count = st.session_state.get("multi_cam_online_count", len(multi_cam.cameras))
         
         # Temporary Runtime Debug Output (Requirement 3)
         with st.expander("🔍 CCTV Grid Runtime Camera Diagnostics", expanded=True):
@@ -969,39 +1603,72 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                 except Exception:
                     pass
             
-            # Setup 2x2 grid layout
-            cam_list = list(multi_cam.cameras.values())
-            
-            row1_cams = cam_list[:2]
-            row2_cams = cam_list[2:4]
-            
+            # Setup view mode and layout
+            view_mode = st.radio(
+                "📺 CCTV Display Mode:",
+                [
+                    "🎛️ 2x2 CCTV Grid (All Feeds)",
+                    "🔍 Focus Feed: CAM-01 (Main Sidewalk / Entrance)",
+                    "🔍 Focus Feed: CAM-02 (Overhead Dense Zone)",
+                    "🔍 Focus Feed: CAM-03 (Street Crossing Plaza)",
+                    "🔍 Focus Feed: CAM-04 (Perimeter Gate)"
+                ],
+                horizontal=True,
+                key="cctv_view_mode_sel"
+            )
+
+            is_focus_mode = view_mode.startswith("🔍 Focus Feed")
+            focus_cam_id = view_mode.split(":")[1].split("(")[0].strip() if is_focus_mode else None
+
             grid_video_ph = {}
             grid_metric_ph = {}
-            
-            # Row 1
-            col1, col2 = st.columns(2)
-            for i, cam in enumerate(row1_cams):
-                target_col = col1 if i == 0 else col2
-                with target_col:
-                    st.markdown(f"### 🎥 `{cam.id}`: {cam.name}")
-                    grid_video_ph[cam.id] = st.empty()
-                    grid_metric_ph[cam.id] = st.empty()
+            focus_video_ph = None
+            focus_metric_ph = None
+
+            # Isolated display container replaces completely on view switch, preventing duplicate/stale components
+            view_area = st.empty()
+            with view_area.container():
+                if is_focus_mode:
+                    focused_cam_obj = multi_cam.cameras.get(focus_cam_id)
+                    focused_cam_title = f"{focus_cam_id} ({focused_cam_obj.name})" if focused_cam_obj else focus_cam_id
+                    st.markdown(f"### 🔍 Detailed Inspection Feed: `{focused_cam_title}`")
+                    focus_video_ph = st.empty()
+                    focus_metric_ph = st.empty()
+                else:
+                    cam_list = list(multi_cam.cameras.values())
+                    row1_cams = cam_list[:2]
+                    row2_cams = cam_list[2:4]
                     
-            # Row 2
-            if row2_cams:
-                col3, col4 = st.columns(2)
-                for i, cam in enumerate(row2_cams):
-                    target_col = col3 if i == 0 else col4
-                    with target_col:
-                        st.markdown(f"### 🎥 `{cam.id}`: {cam.name}")
-                        grid_video_ph[cam.id] = st.empty()
-                        grid_metric_ph[cam.id] = st.empty()
+                    # Row 1
+                    col1, col2 = st.columns(2)
+                    for i, cam in enumerate(row1_cams):
+                        target_col = col1 if i == 0 else col2
+                        with target_col:
+                            st.markdown(f"### 🎥 `{cam.id}`: {cam.name}")
+                            grid_video_ph[cam.id] = st.empty()
+                            grid_metric_ph[cam.id] = st.empty()
+                            
+                    # Row 2
+                    if row2_cams:
+                        col3, col4 = st.columns(2)
+                        for i, cam in enumerate(row2_cams):
+                            target_col = col3 if i == 0 else col4
+                            with target_col:
+                                st.markdown(f"### 🎥 `{cam.id}`: {cam.name}")
+                                grid_video_ph[cam.id] = st.empty()
+                                grid_metric_ph[cam.id] = st.empty()
             
+            cycle_count = 0
             last_firebase_update = 0
             
             try:
                 while st.session_state.is_monitoring:
-                    frames_dict = multi_cam.step_all()
+                    cycle_count += 1
+                    if is_focus_mode:
+                        frames_dict = multi_cam.step_focus(focus_cam_id, step_background=True)
+                    else:
+                        frames_dict = multi_cam.step_all()
+
                     if not frames_dict:
                         st.warning("All camera streams completed or disconnected.")
                         st.session_state.is_monitoring = False
@@ -1010,6 +1677,7 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                     # 1. Check unacknowledged HIGH alerts & pending alarm sound triggers
                     unack_high_alts = multi_cam.get_unacknowledged_high_alerts()
                     pending_alarms = multi_cam.get_pending_alarm_alerts()
+                    do_dom_update = (cycle_count == 1 or cycle_count % 4 == 0 or len(unack_high_alts) > 0)
                     
                     # 1a. Trigger HTML5 Audio Alarm if new HIGH alert triggered and sound enabled
                     audio_html = ""
@@ -1018,71 +1686,81 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                         audio_html = """<audio autoplay style="display:none;"><source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUtvT18AAAAA//8AAAD//wAA//8=" type="audio/wav"></audio>"""
 
                     # 1b. Update overall risk banner / Emergency Flashing Banner
-                    sys_risk = multi_cam.get_overall_system_risk()
-                    overall_level = sys_risk["overall_risk_level"]
-                    highest_id = sys_risk["highest_risk_camera_id"]
-                    highest_name = sys_risk["highest_risk_camera_name"]
-                    highest_score = sys_risk["highest_risk_score"]
-                    active_cams = sys_risk["active_camera_count"]
-                    
-                    if unack_high_alts:
-                        high_cams_info = ", ".join([f"<b>{a.camera_id}</b> ({a.camera_name})" for a in unack_high_alts])
-                        system_banner.markdown(f"""{audio_html}
-                        <div class="cp-emergency-banner">
-                            <div style="font-size:1.15em; font-weight:bold;">🚨 HIGH-RISK SECURITY EMERGENCY ALERT ({len(unack_high_alts)} Active Feed{'s' if len(unack_high_alts)>1 else ''})</div>
-                            <div style="margin-top:4px; font-size:0.92em;">Emergency Streams: {high_cams_info} | Max Score: <b>{highest_score:.1f}/100</b></div>
-                            <div style="margin-top:4px; font-size:0.82em; color:#ffdddd;">⚠️ Immediate operator attention required. Click 'Acknowledge' in Alert Center to silence alarm while continuing active monitoring.</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    elif overall_level == "HIGH":
-                        system_banner.warning(f"{audio_html}⚠️ **COMMAND CENTER STATUS: HIGH RISK (ACKNOWLEDGED)** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
-                    elif overall_level == "MEDIUM":
-                        system_banner.warning(f"🟡 **COMMAND CENTER OVERALL STATUS: MEDIUM RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active CCTV Feeds: **{active_cams}**")
-                    else:
-                        system_banner.success(f"🟢 **COMMAND CENTER OVERALL STATUS: NORMAL / LOW RISK** | Active CCTV Feeds: **{active_cams}**")
-                    
-                    # 1c. Render Alert Center Panel
-                    active_alts = multi_cam.get_active_alerts()
-                    if active_alts:
-                        alt_htmls = []
-                        for alt in active_alts:
-                            if alt.risk_level == "HIGH" and not alt.acknowledged:
-                                b_col, bg_col = "#ff0000", "#3a0000"
-                                badge_lbl = f"🚨 HIGH EMERGENCY ({alt.risk_score:.1f})"
-                            elif alt.risk_level == "HIGH" and alt.acknowledged:
-                                b_col, bg_col = "#ff8800", "#2a1500"
-                                badge_lbl = f"⚠️ HIGH (ACKNOWLEDGED) ({alt.risk_score:.1f})"
-                            elif alt.status == "ESCALATED":
-                                b_col, bg_col = "#ff0000", "#3a0000"
-                                badge_lbl = f"🚨 ESCALATED HIGH ({alt.risk_score:.1f})"
-                            else:
-                                b_col, bg_col = "#ffaa00", "#2a2000"
-                                badge_lbl = f"🟡 MEDIUM ({alt.risk_score:.1f})"
+                    if do_dom_update:
+                        sys_risk = multi_cam.get_overall_system_risk()
+                        overall_level = sys_risk["overall_risk_level"]
+                        highest_id = sys_risk["highest_risk_camera_id"]
+                        highest_name = sys_risk["highest_risk_camera_name"]
+                        highest_score = sys_risk["highest_risk_score"]
+                        active_cams = sys_risk["active_camera_count"]
+                        
+                        if unack_high_alts:
+                            high_cams_info = ", ".join([f"<b>{a.camera_id}</b> ({a.camera_name})" for a in unack_high_alts])
+                            system_banner.markdown(f"""{audio_html}
+<div class="cp-emergency-banner">
+<div style="font-size:1.15em; font-weight:bold;">🚨 HIGH-RISK SECURITY EMERGENCY ALERT ({len(unack_high_alts)} Active Feed{'s' if len(unack_high_alts)>1 else ''})</div>
+<div style="margin-top:4px; font-size:0.92em;">Emergency Streams: {high_cams_info} | Max Score: <b>{highest_score:.1f}/100</b></div>
+<div style="margin-top:4px; font-size:0.82em; color:#ffdddd;">⚠️ Immediate operator attention required. Click 'Acknowledge' in Alert Center to silence alarm while continuing active monitoring.</div>
+</div>""", unsafe_allow_html=True)
+                        elif overall_level == "HIGH":
+                            system_banner.warning(f"{audio_html}⚠️ **COMMAND CENTER STATUS: HIGH RISK (ACKNOWLEDGED)** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active Feeds: **{active_cams}** | ⚡ Grid Speed: **{multi_cam.get_grid_fps():.1f} updates/s**")
+                        elif overall_level == "MEDIUM":
+                            system_banner.warning(f"🟡 **COMMAND CENTER OVERALL STATUS: MEDIUM RISK** | Highest Risk Stream: **{highest_id} ({highest_name})** | Risk Score: **{highest_score:.1f}** | Active Feeds: **{active_cams}** | ⚡ Grid Speed: **{multi_cam.get_grid_fps():.1f} updates/s**")
+                        else:
+                            system_banner.success(f"🟢 **COMMAND CENTER OVERALL STATUS: NORMAL / LOW RISK** | Active CCTV Feeds: **{active_cams}** | ⚡ Grid Speed: **{multi_cam.get_grid_fps():.1f} updates/s**")
+                        
+                        # 1c. Render Alert Center Panel
+                        active_alts = multi_cam.get_active_alerts()
+                        if active_alts:
+                            alt_htmls = []
+                            for alt in active_alts:
+                                if alt.risk_level == "HIGH" and not alt.acknowledged:
+                                    b_col, bg_col = "#ff0000", "#3a0000"
+                                    badge_lbl = f"🚨 HIGH EMERGENCY ({alt.risk_score:.1f})"
+                                elif alt.risk_level == "HIGH" and alt.acknowledged:
+                                    b_col, bg_col = "#ff8800", "#2a1500"
+                                    badge_lbl = f"⚠️ HIGH (ACKNOWLEDGED) ({alt.risk_score:.1f})"
+                                elif alt.status == "ESCALATED":
+                                    b_col, bg_col = "#ff0000", "#3a0000"
+                                    badge_lbl = f"🚨 ESCALATED HIGH ({alt.risk_score:.1f})"
+                                else:
+                                    b_col, bg_col = "#ffaa00", "#2a2000"
+                                    badge_lbl = f"🟡 MEDIUM ({alt.risk_score:.1f})"
 
-                            ack_status_str = f"<b>ACKNOWLEDGED</b> by {alt.acknowledged_by or 'Operator'}" if alt.acknowledged else "<b>UNACKNOWLEDGED</b>"
+                                ack_status_str = f"<b>ACKNOWLEDGED</b> by {alt.acknowledged_by or 'Operator'}" if alt.acknowledged else "<b>UNACKNOWLEDGED</b>"
 
-                            alt_htmls.append(f"""
-                            <div style="background:{bg_col}; border:1px solid {b_col}; padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:0.85em;">
-                                <b>{alt.camera_id}</b> ({alt.camera_name}) &nbsp;|&nbsp;
-                                <span style="color:{b_col}; font-weight:bold;">{badge_lbl}</span> &nbsp;|&nbsp;
-                                <span style="color:#eee;">📍 Risk Zone: <b>{alt.primary_risk_zone}</b> ({alt.primary_zone_density} p/cell)</span> &nbsp;|&nbsp;
-                                <span style="color:#eee;">Reason: {alt.reason}</span> &nbsp;|&nbsp;
-                                <span style="color:#aaa;">State: {ack_status_str}</span>
-                            </div>
-                            """)
-                        alert_center_ph.markdown(
-                            f"**🚨 Active CCTV Alert Events ({len(active_alts)}):**\n" + "".join(alt_htmls),
-                            unsafe_allow_html=True
-                        )
-                    else:
-                        alert_center_ph.markdown("🟢 *No Active Risk Alerts Across CCTV Streams*", unsafe_allow_html=True)
+                                alt_htmls.append(f"""<div style="background:{bg_col}; border:1px solid {b_col}; padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:0.85em;">
+<b>{alt.camera_id}</b> ({alt.camera_name}) &nbsp;|&nbsp;
+<span style="color:{b_col}; font-weight:bold;">{badge_lbl}</span> &nbsp;|&nbsp;
+<span style="color:#eee;">📍 Risk Zone: <b>{alt.primary_risk_zone}</b> ({alt.primary_zone_density} p/cell)</span> &nbsp;|&nbsp;
+<span style="color:#eee;">Reason: {alt.reason}</span> &nbsp;|&nbsp;
+<span style="color:#aaa;">State: {ack_status_str}</span>
+</div>""")
+                            alert_center_ph.markdown(
+                                f"""<div style="margin-bottom:6px;"><b>🚨 Active CCTV Alert Events ({len(active_alts)}):</b></div>""" + "".join(alt_htmls),
+                                unsafe_allow_html=True
+                            )
+                        else:
+                            alert_center_ph.markdown("🟢 *No Active Risk Alerts Across CCTV Streams*", unsafe_allow_html=True)
+                        
+                        # Update Automated Alert Management Feed & Summary across all CCTV streams
+                        if multi_cam.alert_manager:
+                            render_dashboard_alerts(multi_cam.alert_manager, alert_summary_placeholder, alerts_placeholder, history_placeholder)
+                            render_dashboard_notifications(notif_dispatcher, notif_status_ph, notif_history_ph)
                     
-                    # 2. Update per-camera display and telemetry across all cameras
-                    for cam_id, cam in multi_cam.cameras.items():
+                    # 2. Update per-camera display and telemetry
+                    cams_to_display = [focus_cam_id] if is_focus_mode else list(multi_cam.cameras.keys())
+                    for cam_id in cams_to_display:
+                        cam = multi_cam.cameras.get(cam_id)
+                        if cam is None:
+                            continue
+
                         if cam.source_type == "webcam":
                             src_badge_str = f"📷 WEBCAM: {get_camera_display_name(cam.source, cam.device_name)}"
+                        elif cam.source_type in ("phone", "phone_ip"):
+                            src_badge_str = f"📱 PHONE CAM: {mask_stream_url(cam.source)}"
                         elif cam.source_type == "rtsp":
-                            src_badge_str = "🌐 IP CAMERA (RTSP)"
+                            src_badge_str = f"🌐 IP CAM: {mask_stream_url(cam.source)}"
                         else:
                             src_badge_str = "📁 RECORDED VIDEO"
                         dbg_info = cam.get_debug_info()
@@ -1090,93 +1768,110 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                         if cam.status == "ONLINE" and cam_id in frames_dict:
                             frame_out = frames_dict[cam_id]
                             
-                            # High-Speed Web JPEG Stream Compression
-                            display_frame = cv2.resize(frame_out, (640, 360))
-                            _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
-                            grid_video_ph[cam_id].image(jpeg_buffer.tobytes(), use_container_width=True)
+                            # Render Frame to appropriate placeholder
+                            if is_focus_mode and cam_id == focus_cam_id:
+                                # Full Native/HD resolution preview with complete 12-field HUD
+                                if frame_out.shape[1] > 1280 or frame_out.shape[0] > 720:
+                                    display_frame = cv2.resize(frame_out, (1280, 720))
+                                else:
+                                    display_frame = frame_out
+                                _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                                if focus_video_ph is not None:
+                                    focus_video_ph.image(jpeg_buffer.tobytes(), use_container_width=True)
+                            elif not is_focus_mode:
+                                # Standard 2x2 grid cell
+                                display_frame = cv2.resize(frame_out, (640, 360))
+                                _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                                if cam_id in grid_video_ph:
+                                    grid_video_ph[cam_id].image(jpeg_buffer.tobytes(), use_container_width=True)
                             
-                            cam_alt = multi_cam.alert_manager.get_camera_alert_status(cam_id) if multi_cam.alert_manager else None
-                            is_unack_high = (cam.risk_level == "HIGH" and cam_alt is not None and not cam_alt.acknowledged)
-                            is_ack_high = (cam.risk_level == "HIGH" and cam_alt is not None and cam_alt.acknowledged)
+                            if do_dom_update:
+                                cam_alt = multi_cam.alert_manager.get_camera_alert_status(cam_id) if multi_cam.alert_manager else None
+                                is_unack_high = (cam.risk_level == "HIGH" and cam_alt is not None and not cam_alt.acknowledged)
+                                is_ack_high = (cam.risk_level == "HIGH" and cam_alt is not None and cam_alt.acknowledged)
 
-                            if is_unack_high:
-                                tile_css_cls = "cp-tile-high-emergency"
-                                border_style = "border:3px solid #ff0000;"
-                                risk_lbl_str = f"🚨 HIGH RISK — EMERGENCY ({cam.risk_score:.1f})"
-                                badge_color = "#ff0000"
-                            elif is_ack_high:
-                                tile_css_cls = ""
-                                border_style = "border:2px solid #ff8800;"
-                                risk_lbl_str = f"⚠️ HIGH RISK — ACKNOWLEDGED ({cam.risk_score:.1f})"
-                                badge_color = "#ff8800"
-                            elif cam.risk_level == "MEDIUM":
-                                tile_css_cls = ""
-                                border_style = "border:2px solid #ffaa00;"
-                                risk_lbl_str = f"🟡 MEDIUM RISK ({cam.risk_score:.1f})"
-                                badge_color = "#ffaa00"
-                            else:
-                                tile_css_cls = ""
-                                border_style = "border:2px solid #00ff88;"
-                                risk_lbl_str = f"🟢 LOW RISK ({cam.risk_score:.1f})"
-                                badge_color = "#00ff88"
-                            
-                            count_label = "Visible Heads" if mode_key == "HEAD" else "Tracked Persons"
-                            count_val = cam.visible_count if mode_key == "HEAD" else cam.active_count
-                            cam_spatial = extract_spatial_risk_info(cam.density_map)
-                            
-                            grid_metric_ph[cam_id].markdown(f"""
-                            <div class="{tile_css_cls}" style="background:#1a1a2e; padding:10px; border-radius:8px; {border_style} margin-bottom:15px;">
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="color:{badge_color}; font-weight:bold; font-size:1.0em;">{risk_lbl_str}</span>
-                                    <span style="color:#aaa; font-size:0.85em;">{src_badge_str} | FPS: {cam.fps:.1f}</span>
-                                </div>
-                                <div style="margin-top:5px; font-size:0.88em; color:#ddd;">
-                                    👥 {count_label}: <b>{count_val}</b> | 📍 Risk Zone: <b>{cam_spatial['primary_risk_zone']}</b> (<b>{cam_spatial['primary_zone_density']}</b> p/cell) | 🏃 Speed: <b>{cam.avg_speed:.1f} px/f</b> ({cam.dominant_direction})
-                                </div>
-                                <div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #333; padding-top:3px;">
-                                    🔍 Active Src: <b>{dbg_info['active_source_type'].upper()}</b> ({dbg_info['active_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            # Log telemetry
-                            cam_payload = multi_cam.get_camera_telemetry_payload(cam_id)
-                            metrics_logger.log(cam_payload, cam.frame_count)
-                            
-                            if alert_manager and (time.time() - last_firebase_update > 1.0):
-                                alert_manager.update_camera_telemetry(cam_id, cam_payload)
+                                if is_unack_high:
+                                    tile_css_cls = "cp-tile-high-emergency"
+                                    border_style = "border:3px solid #ff0000;"
+                                    risk_lbl_str = f"🚨 HIGH RISK — EMERGENCY ({cam.risk_score:.1f})"
+                                    badge_color = "#ff0000"
+                                elif is_ack_high:
+                                    tile_css_cls = ""
+                                    border_style = "border:2px solid #ff8800;"
+                                    risk_lbl_str = f"⚠️ HIGH RISK — ACKNOWLEDGED ({cam.risk_score:.1f})"
+                                    badge_color = "#ff8800"
+                                elif cam.risk_level == "MEDIUM":
+                                    tile_css_cls = ""
+                                    border_style = "border:2px solid #ffaa00;"
+                                    risk_lbl_str = f"🟡 MEDIUM RISK ({cam.risk_score:.1f})"
+                                    badge_color = "#ffaa00"
+                                else:
+                                    tile_css_cls = ""
+                                    border_style = "border:2px solid #00ff88;"
+                                    risk_lbl_str = f"🟢 LOW RISK ({cam.risk_score:.1f})"
+                                    badge_color = "#00ff88"
                                 
+                                count_label = "Visible Heads" if mode_key == "HEAD" else "Tracked Persons"
+                                count_val = cam.visible_count if mode_key == "HEAD" else cam.active_count
+                                cam_spatial = extract_spatial_risk_info(cam.density_map)
+                                
+                                target_metric_ph = focus_metric_ph if (is_focus_mode and cam_id == focus_cam_id) else grid_metric_ph.get(cam_id)
+                                if target_metric_ph is not None:
+                                    target_metric_ph.markdown(f"""<div class="{tile_css_cls}" style="background:#1a1a2e; padding:10px; border-radius:8px; {border_style} margin-bottom:15px;">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<span style="color:{badge_color}; font-weight:bold; font-size:1.0em;">{risk_lbl_str}</span>
+<span style="color:#aaa; font-size:0.85em;">{src_badge_str} | Display: <b>{cam.fps:.1f} FPS</b> | YOLO: <b>{cam.yolo_inference_fps:.1f} FPS</b></span>
+</div>
+<div style="margin-top:5px; font-size:0.88em; color:#ddd;">
+👥 {count_label}: <b>{count_val}</b> | 📍 Risk Zone: <b>{cam_spatial['primary_risk_zone']}</b> (<b>{cam_spatial['primary_zone_density']}</b> p/cell) | 🏃 Speed: <b>{cam.avg_speed:.1f} px/f</b> ({cam.dominant_direction})
+</div>
+<div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #333; padding-top:3px;">
+🔍 Active Src: <b>{dbg_info['active_source_type'].upper()}</b> ({dbg_info['active_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>
+</div>
+</div>""", unsafe_allow_html=True)
+                            
                         elif cam.status == "CONNECTION FAILED":
-                            grid_metric_ph[cam_id].markdown(f"""
-                            <div style="background:#2a1a1a; padding:10px; border-radius:8px; border:2px solid #ff4444; margin-bottom:15px;">
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="color:#ff4444; font-weight:bold;">🔴 CONNECTION FAILED</span>
-                                    <span style="color:#aaa; font-size:0.85em;">{src_badge_str}</span>
-                                </div>
-                                <div style="margin-top:5px; font-size:0.88em; color:#ffaaaa;">
-                                    ⚠️ {cam.error_message or 'Unable to open camera stream.'}
-                                </div>
-                                <div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #442222; padding-top:3px;">
-                                    🔍 Configured: <b>{dbg_info['configured_source_type'].upper()}</b> ({dbg_info['configured_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
+                            target_ph = focus_metric_ph if (is_focus_mode and cam_id == focus_cam_id) else grid_metric_ph.get(cam_id)
+                            if do_dom_update and target_ph is not None:
+                                target_ph.markdown(f"""<div style="background:#2a1a1a; padding:10px; border-radius:8px; border:2px solid #ff4444; margin-bottom:15px;">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<span style="color:#ff4444; font-weight:bold;">🔴 CONNECTION FAILED</span>
+<span style="color:#aaa; font-size:0.85em;">{src_badge_str}</span>
+</div>
+<div style="margin-top:5px; font-size:0.88em; color:#ffaaaa;">
+⚠️ {cam.error_message or 'Unable to open camera stream.'}
+</div>
+<div style="margin-top:4px; font-size:0.75em; color:#888; border-top:1px solid #442222; padding-top:3px;">
+🔍 Configured: <b>{dbg_info['configured_source_type'].upper()}</b> ({dbg_info['configured_source']}) | Capture Open: <b>{dbg_info['capture_opened']}</b>
+</div>
+</div>""", unsafe_allow_html=True)
                             
                         elif cam.status == "DISABLED":
-                            grid_metric_ph[cam_id].markdown(f"""
-                            <div style="background:#1a1a1a; padding:10px; border-radius:8px; border:1px solid #555; margin-bottom:15px;">
-                                <span style="color:#888; font-weight:bold;">⚪ CAMERA DISABLED</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
+                            target_ph = focus_metric_ph if (is_focus_mode and cam_id == focus_cam_id) else grid_metric_ph.get(cam_id)
+                            if target_ph is not None:
+                                target_ph.markdown("""<div style="background:#1a1a1a; padding:10px; border-radius:8px; border:1px solid #555; margin-bottom:15px;">
+<span style="color:#888; font-weight:bold;">⚪ CAMERA DISABLED</span>
+</div>""", unsafe_allow_html=True)
+                    
+                    # 3. Log telemetry for all processed camera streams
+                    for cam_id, frame_out in frames_dict.items():
+                        c_obj = multi_cam.cameras.get(cam_id)
+                        if c_obj and c_obj.status == "ONLINE":
+                            cam_payload = multi_cam.get_camera_telemetry_payload(cam_id)
+                            metrics_logger.log(cam_payload, c_obj.frame_count)
+                            if alert_manager and (time.time() - last_firebase_update > 1.0):
+                                alert_manager.update_camera_telemetry(cam_id, cam_payload)
+
                     if alert_manager and (time.time() - last_firebase_update > 1.0):
                         last_firebase_update = time.time()
                         
                     time.sleep(0.001)
                     
             finally:
-                multi_cam.stop_all_cameras()
-                st.info("⏹️ Command Center stopped cleanly.")
+                if not st.session_state.get("is_monitoring", False):
+                    multi_cam.stop_all_cameras()
+                    st.session_state.multi_cam_started = False
+                    st.info("⏹️ Command Center stopped cleanly.")
     else:
         st.info("👉 Click **▶️ Start Command Center** in the sidebar to initiate multi-camera monitoring grid.")
 
@@ -1248,18 +1943,19 @@ else:
         fps_metric.metric("⚡ Pipeline FPS", f"{fps:.1f}")
         
         if len(st.session_state.time_history) > 1:
-            df1 = pd.DataFrame({
-                "Time": list(st.session_state.time_history),
-                "Smoothed Score": list(st.session_state.risk_history)
-            })
-            risk_chart.line_chart(df1.set_index("Time"), height=200)
+            fig_risk = create_risk_chart(
+                list(st.session_state.time_history),
+                list(st.session_state.risk_history)
+            )
+            risk_chart.plotly_chart(fig_risk, use_container_width=True)
             
-            df2 = pd.DataFrame({
-                "Time": list(st.session_state.time_history),
-                "Persons": list(st.session_state.person_history),
-                "Max Density": list(st.session_state.density_history)
-            })
-            person_chart.line_chart(df2.set_index("Time"), height=200)
+            fig_person = create_person_density_chart(
+                list(st.session_state.time_history),
+                list(st.session_state.person_history),
+                list(st.session_state.density_history),
+                person_label="Persons"
+            )
+            person_chart.plotly_chart(fig_person, use_container_width=True)
     else:
         status_box.error("🔴 No Telemetry Available. Run `python main.py --source 0 --alerts` or switch to Interactive Web Pipeline mode.")
         risk_placeholder.info("Waiting for pipeline data...")
@@ -1273,6 +1969,9 @@ else:
                 "Score": a.get("combined_score", 0),
                 "Persons": a.get("person_count", 0)
             })
-        alerts_placeholder.dataframe(pd.DataFrame(simplified), use_container_width=True)
+        table_md = ["| Time | Risk | Score | Persons |", "| :--- | :--- | :--- | :--- |"]
+        for row in simplified:
+            table_md.append(f"| {row['Time']} | {row['Risk']} | {float(row['Score']):.1f} | {row['Persons']} |")
+        alerts_placeholder.markdown("\n".join(table_md))
     else:
         alerts_placeholder.info("✅ No active high-risk alerts logged.")

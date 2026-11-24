@@ -584,4 +584,57 @@ def test_mixed_stream_configuration_with_upload(tmp_path):
     assert manager.cameras["CAM-04"].source == "rtsp://192.168.1.100:554/live"
 
 
+def test_step_focus_and_throughput_telemetry():
+    """Verify step_focus prioritizes the focused camera and reports distinct throughput metrics."""
+    manager = MultiCameraManager(device="cpu")
+    manager.start_all_cameras()
+    
+    # Step focus on CAM-01
+    res1 = manager.step_focus("CAM-01", step_background=True)
+    assert "CAM-01" in res1
+    assert len(res1) >= 1
+    
+    # Check distinct throughput telemetry
+    metrics = manager.get_throughput_metrics()
+    assert "display_fps" in metrics
+    assert "yolo_inference_fps" in metrics
+    assert "aggregate_throughput_fps" in metrics
+    assert isinstance(metrics["display_fps"], dict)
+    assert isinstance(metrics["yolo_inference_fps"], dict)
+    assert isinstance(metrics["aggregate_throughput_fps"], (int, float))
+    
+    manager.stop_all_cameras()
+
+
+def test_unindented_alert_html_no_code_block():
+    """Verify alert cards do not have leading indentation that triggers markdown code block rendering."""
+    from dashboard.dashboard_utils import format_alert_card_html
+    from src.alert_manager import AlertEvent
+    
+    alt = AlertEvent(
+        alert_id="ALT-TEST-001",
+        camera_id="CAM-01",
+        camera_name="Main Entrance",
+        timestamp="2026-11-16T12:00:00",
+        severity="HIGH",
+        risk_score=85.0,
+        risk_level="HIGH",
+        category="CROWD_SURGE",
+        reason="Rapid density increase",
+        primary_risk_zone="Center",
+        primary_zone_density=12,
+        status="ACTIVE"
+    )
+    
+    card_html = format_alert_card_html(alt)
+    lines = card_html.split("\n")
+    # Verify no line starts with 4 or more spaces (which triggers CommonMark code blocks)
+    for line in lines:
+        if line.strip():
+            leading_spaces = len(line) - len(line.lstrip(" "))
+            assert leading_spaces < 4, f"Line has >=4 leading spaces: '{line}'"
+    assert "<div style=" in card_html
+    assert "🚨 HIGH-RISK ALERT (85.0)" in card_html
+
+
 

@@ -10,22 +10,18 @@ class VideoProcessor:
     """Utility class for video I/O operations"""
     
     @staticmethod
-    def get_video_source(source):
+    def get_video_source(source, source_type=None):
         """
-        Determine video source type and return cv2.VideoCapture object.
+        Determine video source type and return low-latency or optimized capture object.
         source: 0 for webcam, 'video.mp4' for file, 'rtsp://...' for IP camera
         """
-        if isinstance(source, int):
-            return cv2.VideoCapture(source)
-        elif isinstance(source, str):
-            if source.isdigit():
-                return cv2.VideoCapture(int(source))
-            return cv2.VideoCapture(source)
-        else:
-            try:
-                return cv2.VideoCapture(int(source))
-            except Exception:
-                return cv2.VideoCapture(str(source))
+        from src.capture import create_capture_source
+        if source_type is None:
+            if isinstance(source, int) or (isinstance(source, str) and source.isdigit()) or (isinstance(source, str) and (source.startswith("rtsp://") or source.startswith("http://"))):
+                source_type = "webcam"
+            else:
+                source_type = "video"
+        return create_capture_source(source, source_type=source_type)
     
     @staticmethod
     def get_video_info(cap):
@@ -249,12 +245,12 @@ class FrameAnnotator:
             badge_bg = (30, 160, 50)
             risk_text = f"● LOW ({risk_score:.1f})"
 
-        overlay = frame.copy()
-        
         if w >= 500:
             hud_h = 65
-            cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 16, 24), -1)
-            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+            roi = frame[:hud_h, :]
+            overlay_roi = roi.copy()
+            cv2.rectangle(overlay_roi, (0, 0), (w, hud_h), (12, 16, 24), -1)
+            frame[:hud_h, :] = cv2.addWeighted(overlay_roi, 0.85, roi, 0.15, 0)
             
             cv2.putText(frame, "CROWDPATROL", (15, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(frame, "● MONITORING", (160, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 80), 1, cv2.LINE_AA)
@@ -271,8 +267,10 @@ class FrameAnnotator:
             cv2.putText(frame, f"FPS: {fps_val:.1f}", (w - 180, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 180), 2, cv2.LINE_AA)
         else:
             hud_h = 40
-            cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 16, 24), -1)
-            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+            roi = frame[:hud_h, :]
+            overlay_roi = roi.copy()
+            cv2.rectangle(overlay_roi, (0, 0), (w, hud_h), (12, 16, 24), -1)
+            frame[:hud_h, :] = cv2.addWeighted(overlay_roi, 0.85, roi, 0.15, 0)
 
             title_str = f"{cam_id} | 👥 {person_cnt} | "
             cv2.putText(frame, title_str, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
@@ -307,43 +305,8 @@ class FrameAnnotator:
             
         frame = FrameAnnotator.draw_telemetry_hud(frame, metrics, camera_id=metrics.get("camera_id", "CAM-01"))
 
-        if w >= 640:
-            panel_w = 210
-            panel_x = w - panel_w
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (panel_x, 65), (w, h - 10), (15, 22, 32), -1)
-            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
-            cv2.rectangle(frame, (panel_x, 65), (w, h - 10), (50, 65, 85), 1)
-            
-            y = 92
-            risk_lvl = str(metrics.get("risk", "LOW")).upper()
-            info_items = [
-                ("CAMERA", metrics.get("camera_id", "CAM-01")),
-                ("PERSONS", str(metrics.get("person_count", 0))),
-                ("DENSITY", f"{metrics.get('density', 0)} / cell"),
-                ("RISK LEVEL", risk_lvl),
-                ("RISK SCORE", f"{metrics.get('combined_score', 0.0):.1f}"),
-                ("AVG SPEED", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
-                ("MAX SPEED", f"{metrics.get('max_speed', 0.0):.1f} px/f"),
-                ("HEADING", str(metrics.get("dominant_direction", "STATIC"))),
-                ("FPS", f"{metrics.get('fps', 0.0):.1f}"),
-                ("RISK ZONE", f"{spatial_info['primary_risk_zone']} ({spatial_info['primary_zone_density']})"),
-            ]
-            
-            for label, value in info_items:
-                cv2.putText(frame, f"{label}:", (panel_x + 12, y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.42, (170, 180, 195), 1, cv2.LINE_AA)
-                
-                val_color = (255, 255, 255)
-                if label == "RISK LEVEL":
-                    val_color = (0, 0, 240) if risk_lvl == "HIGH" else ((0, 140, 240) if risk_lvl == "MEDIUM" else (40, 200, 60))
-                elif label == "RISK ZONE":
-                    val_color = (0, 220, 255)
-                    
-                cv2.putText(frame, str(value), (panel_x + 105, y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.45, val_color, 2 if label in ["PERSONS", "RISK LEVEL", "RISK SCORE"] else 1, cv2.LINE_AA)
-                y += 26
-
+        # Render full responsive right-side statistics panel with all 12 operational fields
+        frame = FrameAnnotator.draw_statistics_panel(frame, metrics, spatial_info, is_head_mode=False)
         return frame
 
     @staticmethod
@@ -431,37 +394,140 @@ class FrameAnnotator:
             
         frame = FrameAnnotator.draw_telemetry_hud(frame, metrics, camera_id=metrics.get("camera_id", "HEAD-01"))
 
-        if w >= 640:
-            panel_w = 210
-            panel_x = w - panel_w
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (panel_x, 65), (w, h - 10), (15, 22, 32), -1)
-            frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
-            cv2.rectangle(frame, (panel_x, 65), (w, h - 10), (50, 65, 85), 1)
-            
-            y = 92
-            risk_lvl = str(metrics.get("risk", "LOW")).upper()
-            info_items = [
-                ("MODE", "HEAD EXP"),
-                ("VISIBLE HEADS", str(metrics.get("visible_heads", 0))),
-                ("ACTIVE TRACKS", str(metrics.get("person_count", 0))),
-                ("MAX HEAD DENS", str(metrics.get("density", 0))),
-                ("RISK LEVEL", risk_lvl),
-                ("HEAD RISK", f"{metrics.get('combined_score', 0.0):.1f}"),
-                ("AVG SPEED", f"{metrics.get('avg_speed', 0.0):.1f} px/f"),
-                ("HEADING", str(metrics.get("dominant_direction", "STATIC"))),
-                ("FPS", f"{metrics.get('fps', 0.0):.1f}"),
-                ("RISK ZONE", f"{spatial_info['primary_risk_zone']} ({spatial_info['primary_zone_density']})"),
+        # Render full responsive right-side statistics panel with all 12 operational fields
+        frame = FrameAnnotator.draw_statistics_panel(frame, metrics, spatial_info, is_head_mode=True)
+        return frame
+
+    @staticmethod
+    def draw_statistics_panel(frame, metrics, spatial_info, is_head_mode=False):
+        """
+        Draws detailed, high-contrast, camera-specific statistics panel on right side of frame.
+        Includes all 12 operational fields:
+        - Camera ID and camera name
+        - Current FPS
+        - Person count
+        - Visible head count
+        - Active tracking IDs count
+        - Density level & count
+        - Peak density zone
+        - Optical flow / movement speed
+        - Current risk score
+        - Risk classification
+        - Current alert state
+        - Detection mode
+        """
+        h, w = frame.shape[:2]
+        if h < 100 or w < 320:
+            return frame
+
+        # Responsive panel sizing
+        if w >= 900:
+            panel_w = 260
+            font_scale = 0.44
+            font_scale_val = 0.46
+            row_h = 24
+            pad_x = 12
+            val_x_offset = 125
+            top_y = 70
+        elif w >= 600:
+            panel_w = 220
+            font_scale = 0.38
+            font_scale_val = 0.40
+            row_h = 20
+            pad_x = 10
+            val_x_offset = 105
+            top_y = 65
+        else:
+            panel_w = 180
+            font_scale = 0.30
+            font_scale_val = 0.32
+            row_h = 16
+            pad_x = 6
+            val_x_offset = 88
+            top_y = 45
+
+        panel_x = w - panel_w
+        bottom_y = min(h - 8, top_y + 13 * row_h + 10)
+
+        # Blended dark panel
+        roi = frame[top_y:bottom_y, panel_x:w]
+        if roi.size > 0:
+            overlay_panel = np.full_like(roi, (15, 22, 32))
+            cv2.addWeighted(overlay_panel, 0.85, roi, 0.15, 0, dst=roi)
+            cv2.rectangle(frame, (panel_x, top_y), (w - 1, bottom_y), (50, 65, 85), 1)
+
+        cam_id = str(metrics.get("camera_id", "CAM-01"))
+        cam_name = str(metrics.get("camera_name", "Main Feed"))
+        if len(cam_name) > 13:
+            cam_name = cam_name[:11] + ".."
+
+        risk_lvl = str(metrics.get("risk", "LOW")).upper()
+        risk_score = float(metrics.get("combined_score", 0.0))
+        fps_val = float(metrics.get("fps", 0.0))
+
+        # Alert state
+        alert_state = str(metrics.get("alert_state", "NORMAL")).upper()
+        if "ACK" in alert_state:
+            alert_col = (0, 140, 240)
+        elif "ACTIVE" in alert_state or "HIGH" in alert_state:
+            alert_col = (0, 0, 240)
+        else:
+            alert_col = (40, 200, 60)
+
+        mode_str = "HEAD EXP" if is_head_mode else "PERSON"
+
+        # Tracks & density
+        person_cnt = metrics.get("person_count", 0)
+        visible_heads = metrics.get("visible_heads", person_cnt)
+        active_tracks = metrics.get("active_tracks", person_cnt)
+
+        density_val = metrics.get("density", 0)
+        peak_zone = metrics.get("risk_zone", spatial_info.get("primary_risk_zone", "A1"))
+        zone_val = spatial_info.get("primary_zone_density", density_val)
+
+        speed_val = float(metrics.get("avg_speed", 0.0))
+        heading = str(metrics.get("dominant_direction", "STATIC"))
+        if len(heading) > 7:
+            heading = heading[:6] + "."
+
+        if is_head_mode:
+            items = [
+                ("FEED", f"{cam_id} ({cam_name})", (0, 220, 255)),
+                ("MODE", mode_str, (0, 240, 240)),
+                ("FPS", f"{fps_val:.1f}", (0, 255, 180)),
+                ("HEADS", str(visible_heads), (0, 255, 255)),
+                ("ACTIVE TRKS", str(active_tracks), (200, 200, 200)),
+                ("DENSITY", f"{density_val} / cell", (255, 255, 255)),
+                ("PEAK ZONE", f"{peak_zone} ({zone_val}p)", (0, 220, 255)),
+                ("SPEED", f"{speed_val:.1f} ({heading})", (220, 220, 220)),
+                ("RISK SCORE", f"{risk_score:.1f}", (0, 0, 240) if risk_lvl == "HIGH" else ((0, 140, 240) if risk_lvl == "MEDIUM" else (40, 200, 60))),
+                ("RISK LEVEL", risk_lvl, (0, 0, 240) if risk_lvl == "HIGH" else ((0, 140, 240) if risk_lvl == "MEDIUM" else (40, 200, 60))),
+                ("ALERT STATE", alert_state, alert_col)
             ]
-            
-            for label, value in info_items:
-                cv2.putText(frame, f"{label}:", (panel_x + 10, y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.40, (170, 180, 195), 1)
-                val_color = (0, 255, 255)
-                cv2.putText(frame, str(value), (panel_x + 115, y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.42, val_color, 1)
-                y += 26
-            
+        else:
+            items = [
+                ("FEED", f"{cam_id} ({cam_name})", (0, 220, 255)),
+                ("MODE", mode_str, (0, 240, 240)),
+                ("FPS", f"{fps_val:.1f}", (0, 255, 180)),
+                ("PERSONS", str(person_cnt), (255, 255, 255)),
+                ("ACTIVE TRKS", str(active_tracks), (200, 200, 200)),
+                ("DENSITY", f"{density_val} / cell", (255, 255, 255)),
+                ("PEAK ZONE", f"{peak_zone} ({zone_val}p)", (0, 220, 255)),
+                ("SPEED", f"{speed_val:.1f} ({heading})", (220, 220, 220)),
+                ("RISK SCORE", f"{risk_score:.1f}", (0, 0, 240) if risk_lvl == "HIGH" else ((0, 140, 240) if risk_lvl == "MEDIUM" else (40, 200, 60))),
+                ("RISK LEVEL", risk_lvl, (0, 0, 240) if risk_lvl == "HIGH" else ((0, 140, 240) if risk_lvl == "MEDIUM" else (40, 200, 60))),
+                ("ALERT STATE", alert_state, alert_col)
+            ]
+
+        y = top_y + int(row_h * 0.95)
+        for lbl, val, vcol in items:
+            cv2.putText(frame, f"{lbl}:", (panel_x + pad_x, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (170, 180, 195), 1, cv2.LINE_AA)
+            is_bold = lbl in ["FEED", "RISK LEVEL", "RISK SCORE", "ALERT STATE", "PERSONS", "HEADS", "VIS. HEADS"]
+            cv2.putText(frame, str(val), (panel_x + val_x_offset, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale_val, vcol, 2 if (is_bold and w >= 600) else 1, cv2.LINE_AA)
+            y += row_h
+
         return frame
 
 

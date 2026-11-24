@@ -20,7 +20,19 @@ from ultralytics import YOLO
 BASE_DIR = Path(__file__).parent.parent
 DEFAULT_HEAD_MODEL_PATH = str(BASE_DIR / "models" / "crowdpatrol_yolov8n_head_v4.pt")
 
-def nms_cpu(boxes, scores, iou_threshold=0.45):
+def apply_clahe(img):
+    """
+    Adaptive histogram equalization in LAB color space.
+    Enhances local contrast to reveal shadowed and low-contrast heads
+    in dense outdoor/indoor crowds without altering input image geometry.
+    """
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    cl = clahe.apply(l)
+    return cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+
+def nms_cpu(boxes, scores, iou_threshold=0.50):
     if len(boxes) == 0:
         return []
     boxes = np.array(boxes)
@@ -64,9 +76,11 @@ class ExperimentalHeadDetector:
         self.imgsz = imgsz
         self.target_type = "head"  # Explicit target type
         
-    def detect_full_frame(self, frame):
-        """Standard full-frame YOLO inference."""
-        results = self.model(frame, imgsz=self.imgsz, conf=self.confidence, device=self.device, verbose=False)[0]
+    def detect_full_frame(self, frame, enhance_contrast=True):
+        """Standard full-frame YOLO inference with adaptive contrast preprocessing."""
+        proc_frame = apply_clahe(frame) if enhance_contrast else frame
+        with torch.inference_mode():
+            results = self.model(proc_frame, imgsz=self.imgsz, conf=self.confidence, device=self.device, verbose=False)[0]
         detections = []
         
         for box in results.boxes:
@@ -79,8 +93,13 @@ class ExperimentalHeadDetector:
                 
         return detections
 
-    def detect_tiled_2x2(self, frame, overlap=0.15):
-        """2x2 Spatial tiled inference for micro head feature detection."""
+    def detect_tiled_2x2(self, frame, overlap=0.15, enhance_contrast=True):
+        """
+        Batched multi-scale sliced inference for micro head feature detection.
+        Combines full-frame context (for large/central heads) with 4 localized quadrant tiles
+        (for distant micro-heads) executed in a single batched tensor forward pass.
+        Eliminates tile boundary slicing losses through unified global NMS.
+        """
         h, w = frame.shape[:2]
         tile_w = int(w * (0.5 + overlap / 2))
         tile_h = int(h * (0.5 + overlap / 2))
@@ -92,27 +111,34 @@ class ExperimentalHeadDetector:
             (w - tile_w, h - tile_h, w, h)
         ]
         
+        proc_frame = apply_clahe(frame) if enhance_contrast else frame
+        tile_crops = [proc_frame[y_min:y_max, x_min:x_max] for (x_min, y_min, x_max, y_max) in tiles_offsets]
+        
+        # Batch: 1 full-frame + 4 quadrant tiles in a single forward pass
+        batch = [proc_frame] + tile_crops
+        with torch.inference_mode():
+            results = self.model(batch, imgsz=self.imgsz, conf=self.confidence, device=self.device, verbose=False)
+            
         all_boxes = []
         all_scores = []
         
-        for (x_min, y_min, x_max, y_max) in tiles_offsets:
-            tile_crop = frame[y_min:y_max, x_min:x_max]
-            results = self.model(tile_crop, imgsz=self.imgsz, conf=self.confidence, device=self.device, verbose=False)[0]
-            
-            for box in results.boxes:
+        # 1. Global Full-Frame Detections
+        for box in results[0].boxes:
+            if int(box.cls) == 0 and float(box.conf) >= self.confidence:
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                all_boxes.append([x1, y1, x2, y2])
+                all_scores.append(float(box.conf))
+                
+        # 2. Localized Tile Detections with Coordinate Offsets
+        for t_idx, (ox1, oy1, ox2, oy2) in enumerate(tiles_offsets):
+            t_res = results[t_idx + 1]
+            for box in t_res.boxes:
                 if int(box.cls) == 0 and float(box.conf) >= self.confidence:
                     tx1, ty1, tx2, ty2 = box.xyxy[0].tolist()
-                    conf = float(box.conf)
+                    all_boxes.append([ox1 + tx1, oy1 + ty1, ox1 + tx2, oy1 + ty2])
+                    all_scores.append(float(box.conf))
                     
-                    gx1 = x_min + tx1
-                    gy1 = y_min + ty1
-                    gx2 = x_min + tx2
-                    gy2 = y_min + ty2
-                    
-                    all_boxes.append([gx1, gy1, gx2, gy2])
-                    all_scores.append(conf)
-                    
-        keep_indices = nms_cpu(all_boxes, all_scores, iou_threshold=0.45)
+        keep_indices = nms_cpu(all_boxes, all_scores, iou_threshold=0.50)
         
         detections = []
         for idx in keep_indices:

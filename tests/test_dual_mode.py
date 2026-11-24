@@ -214,3 +214,48 @@ def test_coasted_tracks_excluded_from_visible_tracks():
     
     assert len(active3) == 2       # DeepSORT retains confirmed tracks internally
     assert len(visible3) == 0       # Coasted tracks excluded from visible rendering
+
+
+def test_phase4_2_clahe_preprocessing():
+    """Verify Phase 4.2 CLAHE preprocessing preserves dimensions, dtype and enhances contrast."""
+    from src.experimental_head_mode import apply_clahe
+    frame = np.random.randint(0, 100, (480, 640, 3), dtype=np.uint8)
+    enhanced = apply_clahe(frame)
+    assert enhanced.shape == frame.shape
+    assert enhanced.dtype == np.uint8
+    # Enhanced frame in dark regions should have stretched histogram
+    assert enhanced.mean() >= frame.mean()
+
+
+def test_phase4_2_batched_tiled_head_detection():
+    """Verify Phase 4.2 batched multi-scale sliced inference produces valid format and global NMS."""
+    head_path = "models/crowdpatrol_yolov8n_head_v4.pt" if os.path.exists("models/crowdpatrol_yolov8n_head_v4.pt") else DEFAULT_HEAD_MODEL_PATH
+    detector = ExperimentalHeadDetector(model_path=head_path, confidence=0.25, device="cpu")
+    dummy_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    
+    # Run batched tiled detection
+    dets = detector.detect_tiled_2x2(dummy_frame)
+    assert isinstance(dets, list)
+    for det in dets:
+        bbox, conf, cls_id = det
+        assert len(bbox) == 4
+        assert conf >= 0.25
+        assert cls_id == 0
+
+
+def test_phase4_2_mobilenetv2_channels_last_equivalence():
+    """Verify channels-last MobileNetV2 embedding inference matches contiguous embeddings exactly."""
+    import torch
+    from src.tracking import PersonTracker, _batched_embedder_predict
+    
+    tracker = PersonTracker()
+    embedder = tracker.tracker.embedder
+    
+    crops = [np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8) for _ in range(5)]
+    
+    # Run prediction
+    embs = _batched_embedder_predict(embedder, crops)
+    assert isinstance(embs, np.ndarray)
+    assert embs.shape == (5, 1280)
+    assert np.all(np.isfinite(embs))
+

@@ -8,24 +8,36 @@ def _batched_embedder_predict(embedder_self, np_images):
     """
     Optimized batched PyTorch inference for MobileNetV2 DeepSORT embedder.
     Preserves exact preprocessing, normalization, model output & ordering.
+    Uses pre-allocated contiguous memory and channels-last memory format on CPU
+    for accelerated oneDNN AVX2/AVX-512 convolution kernels.
     """
     if not np_images:
         return []
     
-    valid_crops = []
-    for img in np_images:
+    n = len(np_images)
+    batch_np = np.empty((n, 224, 224, 3), dtype=np.uint8)
+    for i, img in enumerate(np_images):
         if img is None or img.size == 0 or img.shape[0] == 0 or img.shape[1] == 0:
-            valid_crops.append(np.zeros((224, 224, 3), dtype=np.uint8))
+            batch_np[i] = 0
         else:
-            valid_crops.append(cv2.resize(img[..., ::-1], (224, 224)))
+            resized = cv2.resize(img, (224, 224), interpolation=cv2.INTER_LINEAR)
+            cv2.cvtColor(resized, cv2.COLOR_BGR2RGB, dst=batch_np[i])
             
-    arr = np.stack(valid_crops, axis=0)
-    tensor = torch.from_numpy(arr).permute(0, 3, 1, 2).to(torch.float32) / 255.0
+    tensor = torch.from_numpy(batch_np).permute(0, 3, 1, 2).to(torch.float32) / 255.0
     
     if hasattr(embedder_self, 'gpu') and embedder_self.gpu:
         tensor = tensor.cuda()
         if hasattr(embedder_self, 'half') and embedder_self.half:
             tensor = tensor.half()
+    else:
+        # Accelerate CPU forward pass using channels-last memory format
+        if not getattr(embedder_self, '_is_channels_last', False):
+            try:
+                embedder_self.model = embedder_self.model.to(memory_format=torch.channels_last)
+                embedder_self._is_channels_last = True
+            except Exception:
+                pass
+        tensor = tensor.to(memory_format=torch.channels_last)
 
     if not hasattr(embedder_self, '_mean_tensor') or embedder_self._mean_tensor.device != tensor.device:
         dtype = tensor.dtype
@@ -42,8 +54,20 @@ def _batched_embedder_predict(embedder_self, np_images):
 
 class PersonTracker:
     def __init__(self, max_age=30, n_init=1):
+        if torch.get_num_threads() > 14:
+            try:
+                torch.set_num_threads(14)
+            except Exception:
+                pass
         self.tracker = DeepSort(max_age=max_age, n_init=n_init)
         if self.tracker.embedder is not None:
+            if hasattr(self.tracker.embedder, 'model') and self.tracker.embedder.model is not None:
+                try:
+                    self.tracker.embedder.model.eval()
+                    self.tracker.embedder.model = self.tracker.embedder.model.to(memory_format=torch.channels_last)
+                    self.tracker.embedder._is_channels_last = True
+                except Exception:
+                    pass
             self.tracker.embedder.predict = types.MethodType(_batched_embedder_predict, self.tracker.embedder)
         self.last_tracks = []
         self.last_visible_tracks = []

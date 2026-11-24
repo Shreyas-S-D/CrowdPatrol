@@ -235,3 +235,163 @@ def determine_connection_status(
         return "CONNECTED"
         
     return "UNAVAILABLE"
+
+
+def format_alert_card_html(alt: Any) -> str:
+    """Generates styled HTML card for an active alert event."""
+    sev = getattr(alt, "severity", getattr(alt, "risk_level", "LOW")).upper()
+    if sev == "CRITICAL":
+        b_col, bg_col = "#ff0055", "#400018"
+        badge = f"🔥 CRITICAL DENSITY ALERT ({getattr(alt, 'risk_score', 0.0):.1f})"
+    elif sev == "HIGH":
+        b_col, bg_col = "#ff3333", "#3a0000"
+        badge = f"🚨 HIGH-RISK ALERT ({getattr(alt, 'risk_score', 0.0):.1f})"
+    else:
+        b_col, bg_col = "#ffaa00", "#2a2000"
+        badge = f"🟡 MEDIUM-RISK WARNING ({getattr(alt, 'risk_score', 0.0):.1f})"
+        
+    status_text = f"<b>{getattr(alt, 'status', 'ACTIVE')}</b>"
+    if getattr(alt, "acknowledged", False):
+        status_text += f" (Acknowledged by {getattr(alt, 'acknowledged_by', 'Operator') or 'Operator'})"
+
+    ts = str(getattr(alt, "timestamp", ""))[:19].replace('T', ' ')
+    cat = getattr(alt, "category", "CROWD_RISK")
+    density = getattr(alt, "crowd_density", getattr(alt, "primary_zone_density", 0))
+    zone = getattr(alt, "primary_risk_zone", "--")
+
+    return f"""<div style="background:{bg_col}; border:2px solid {b_col}; padding:10px 14px; border-radius:8px; margin-bottom:8px;">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<span style="color:{b_col}; font-weight:bold; font-size:1.05em;">{badge}</span>
+<span style="color:#aaa; font-size:0.85em;">{ts}</span>
+</div>
+<div style="color:#fff; font-size:0.95em; margin-top:4px;">
+<b>{getattr(alt, 'camera_id', 'CAM')}</b> ({getattr(alt, 'camera_name', 'Camera')}) &nbsp;|&nbsp;
+Category: <b>{cat}</b> &nbsp;|&nbsp;
+Density: <b>{density}</b> p/cell (Zone <b>{zone}</b>)
+</div>
+<div style="color:#eee; font-size:0.88em; margin-top:2px;">Reason: <i>{getattr(alt, 'reason', '')}</i></div>
+<div style="color:#bbb; font-size:0.82em; margin-top:4px;">Status: {status_text}</div>
+</div>"""
+
+
+def format_alert_history_table(history: list) -> str:
+    """Formats list of AlertEvents into Markdown table."""
+    if not history:
+        return "No historical alerts recorded yet."
+    table_md = [
+        "| Time | Camera | Severity | Category | Score | Density | Status | Reason |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+    ]
+    for h in reversed(history):
+        ts = str(getattr(h, "timestamp", ""))[:19].replace("T", " ")
+        cam = f"{getattr(h, 'camera_id', 'CAM')} ({getattr(h, 'camera_name', 'Camera')})"
+        sev = getattr(h, "severity", getattr(h, "risk_level", "LOW"))
+        cat = getattr(h, "category", "CROWD_RISK")
+        score = f"{getattr(h, 'risk_score', 0.0):.1f}"
+        dens = getattr(h, "crowd_density", getattr(h, "primary_zone_density", 0))
+        status = getattr(h, "status", "UNKNOWN")
+        reason = getattr(h, "reason", "")
+        if len(reason) > 40:
+            reason = reason[:37] + "..."
+        table_md.append(f"| {ts} | {cam} | {sev} | {cat} | {score} | {dens} | {status} | {reason} |")
+    return "\n".join(table_md)
+
+
+def render_dashboard_alerts(alert_mgr, summary_ph, feed_ph, history_ph=None):
+    """
+    Renders standardized Alert Summary, Live Alert Feed, and Alert History in the dashboard.
+    """
+    if alert_mgr is None:
+        feed_ph.info("Alert Manager not active.")
+        return
+        
+    summary = alert_mgr.get_alert_summary()
+    with summary_ph.container():
+        try:
+            import streamlit as st
+            s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+            s_col1.metric("🚨 Active Alerts", summary["active"])
+            s_col2.metric("🔴 High / Critical", summary["high"] + summary["critical"])
+            s_col3.metric("🟡 Medium Risk", summary["medium"])
+            s_col4.metric("✅ Resolved", summary["resolved"])
+        except Exception:
+            pass
+
+    active_alerts = alert_mgr.get_active_alerts()
+    if active_alerts:
+        cards = [format_alert_card_html(alt) for alt in active_alerts]
+        feed_ph.markdown("".join(cards), unsafe_allow_html=True)
+    else:
+        feed_ph.markdown("""<div style="background:#142918; border:1px solid #00dd66; padding:10px 14px; border-radius:8px; margin-bottom:8px;">
+<span style="color:#00dd66; font-weight:bold;">🟢 ALL CLEAR — NO ACTIVE ALERTS</span>
+<div style="color:#bbb; font-size:0.85em; margin-top:2px;">Crowd density, velocity and risk scores are within normal operating bounds.</div>
+</div>""", unsafe_allow_html=True)
+
+    if history_ph is not None:
+        history = alert_mgr.get_alert_history(limit=10)
+        table_md = format_alert_history_table(history)
+        history_ph.markdown(table_md)
+
+
+def format_notification_history_table(history: list) -> str:
+    """Formats list of NotificationRecord objects into Markdown table."""
+    if not history:
+        return "No notifications dispatched yet."
+    table_md = [
+        "| Time | Channel | Severity | Camera | Alert ID | Recipient | Status | Notes |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+    ]
+    for r in reversed(history):
+        ts = str(getattr(r, "timestamp", ""))[:19].replace("T", " ")
+        ch = getattr(r, "channel", "EMAIL")
+        sev = getattr(r, "severity", "INFO")
+        cam = getattr(r, "camera_id", "--")
+        alt = getattr(r, "alert_id", "--")
+        rec = getattr(r, "recipient", "")
+        # Mask email/phone in table for security
+        if "@" in rec:
+            parts = rec.split("@")
+            rec_safe = (parts[0][:3] if len(parts[0]) >= 3 else parts[0]) + "***@" + parts[1]
+        elif len(rec) > 6:
+            rec_safe = rec[:3] + "***" + rec[-3:]
+        else:
+            rec_safe = rec
+        status = getattr(r, "status", "UNKNOWN")
+        err = getattr(r, "error_message", "") or ""
+        if len(err) > 30:
+            err = err[:27] + "..."
+        table_md.append(f"| {ts} | {ch} | {sev} | {cam} | {alt} | {rec_safe} | {status} | {err} |")
+    return "\n".join(table_md)
+
+
+def render_dashboard_notifications(dispatcher, status_ph, history_ph=None):
+    """
+    Renders Notification Delivery System status and history in dashboard.
+    """
+    if dispatcher is None:
+        return
+    summary = dispatcher.get_status_summary()
+    with status_ph.container():
+        try:
+            import streamlit as st
+            n_col1, n_col2, n_col3, n_col4 = st.columns(4)
+            email_status = "🟢 Configured (SMTP)" if summary["is_email_configured"] else "⚪ Not Configured"
+            sms_status = "🟢 Configured (Twilio)" if summary["is_sms_configured"] else "⚪ Not Configured"
+            n_col1.metric("📧 Email Dispatch", email_status)
+            n_col2.metric("📱 SMS Dispatch", sms_status)
+            n_col3.metric("📤 Delivered", summary["total_sent"])
+            n_col4.metric("❌ Failures", summary["total_failed"])
+
+            last_attempt = summary.get("last_attempt_time")
+            if last_attempt:
+                last_ts = last_attempt[:19].replace('T', ' ')
+                st.caption(f"Last Attempt: **{last_ts}** via **{summary.get('last_attempt_channel')}** — Status: **{summary.get('last_attempt_status')}**")
+        except Exception:
+            pass
+
+    if history_ph is not None:
+        history = dispatcher.get_history(limit=10)
+        table_md = format_notification_history_table(history)
+        history_ph.markdown(table_md)
+
+

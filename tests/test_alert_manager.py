@@ -558,5 +558,345 @@ def test_direct_stream_independent_spatial_zone():
     assert alt_direct.zone_description == "Bottom-Left"
 
 
+# ==============================================================================
+# Phase 1: Automated Alert Management System Specification Verification Tests
+# ==============================================================================
+from unittest.mock import MagicMock
+from dashboard.dashboard_utils import format_alert_card_html, format_alert_history_table, render_dashboard_alerts
+
+
+def test_automated_medium_risk_alert_generation():
+    """1. Automated medium-risk alert generation with complete schema fields."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    telemetry = {
+        "risk_level": "MEDIUM",
+        "combined_score": 52.5,
+        "max_density": 12,
+        "person_count": 22,
+        "growth_rate": 1.1,
+        "last_frame_time": "2026-11-16T15:00:00"
+    }
+    alert = manager.process_camera_telemetry("CAM-01", "Entrance", telemetry)
+    
+    assert alert is not None
+    assert alert.camera_id == "CAM-01"
+    assert alert.severity == "MEDIUM"
+    assert alert.risk_level == "MEDIUM"
+    assert alert.risk_score == 52.5
+    assert alert.crowd_density == 12
+    assert alert.person_count == 22
+    assert alert.status == "ACTIVE"
+    assert alert.timestamp == "2026-11-16T15:00:00"
+    assert alert.timestamp_unix > 0
+    assert "alert_id" in alert.to_dict()
+    assert alert.category in ["MEDIUM_RISK", "CROWD_RISK"]
+    assert "Elevated Density" in alert.reason
+
+
+def test_automated_high_risk_alert_generation():
+    """2. Automated high-risk alert generation."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    telemetry = {
+        "risk_level": "HIGH",
+        "combined_score": 78.0,
+        "max_density": 22,
+        "person_count": 45,
+        "growth_rate": 2.2,
+        "avg_speed": 2.8
+    }
+    alert = manager.process_camera_telemetry("CAM-02", "Concourse", telemetry)
+    
+    assert alert is not None
+    assert alert.camera_id == "CAM-02"
+    assert alert.severity == "HIGH"
+    assert alert.risk_level == "HIGH"
+    assert alert.status == "ACTIVE"
+    assert alert.alarm_played is False
+    assert "High Crowd Density" in alert.reason
+    assert "Abnormal Motion Speed" in alert.reason
+
+
+def test_critical_density_alert_generation():
+    """3. Critical crowd-density threshold triggers CRITICAL severity alert."""
+    tracker = CameraAlertTracker("CAM-03", "Main Plaza", cooldown_seconds=30, config={"critical_density_threshold": 30})
+    telemetry = {
+        "risk_level": "HIGH",
+        "combined_score": 88.0,
+        "max_density": 35,
+        "person_count": 80
+    }
+    alert, _ = tracker.process_telemetry(telemetry)
+    
+    assert alert is not None
+    assert alert.severity == "CRITICAL"
+    assert alert.risk_level == "CRITICAL"
+    assert alert.category == "CRITICAL_DENSITY"
+    assert "Critical Crowd Density (35 persons/cell)" in alert.reason
+
+
+def test_alert_cooldown_and_duplicate_suppression_cycle():
+    """4 & 5. Alert cooldown prevents spamming on sustained frames, re-triggers after expiration."""
+    tracker = CameraAlertTracker("CAM-01", "Gate 1", cooldown_seconds=0.1)
+    
+    # Frame 1: initial alert
+    alt1, _ = tracker.process_telemetry({"risk_level": "MEDIUM", "combined_score": 50.0, "max_density": 10})
+    assert alt1 is not None
+    
+    # Frame 2 (immediate): suppressed
+    alt2, _ = tracker.process_telemetry({"risk_level": "MEDIUM", "combined_score": 53.0, "max_density": 11})
+    assert alt2 is None
+    assert tracker.active_alert.risk_score == 53.0  # In-place metrics update
+    
+    # Frame 3: after cooldown expires
+    time.sleep(0.15)
+    alt3, _ = tracker.process_telemetry({"risk_level": "MEDIUM", "combined_score": 55.0, "max_density": 12})
+    assert alt3 is not None
+    assert alt3.alert_id != alt1.alert_id
+
+
+def test_escalation_to_critical_density():
+    """6. Risk escalation: transition to higher severity generates ESCALATED alert even within cooldown."""
+    tracker = CameraAlertTracker("CAM-01", "Gate 1", cooldown_seconds=30.0, config={"critical_density_threshold": 30})
+    
+    # Step 1: LOW -> MEDIUM
+    tracker.process_telemetry({"risk_level": "MEDIUM", "combined_score": 45.0, "max_density": 15})
+    
+    # Step 2: Immediate escalation to CRITICAL
+    alt_esc, _ = tracker.process_telemetry({"risk_level": "HIGH", "combined_score": 92.0, "max_density": 40})
+    
+    assert alt_esc is not None
+    assert alt_esc.status == "ESCALATED"
+    assert alt_esc.severity == "CRITICAL"
+    assert tracker.current_risk_level == "CRITICAL"
+
+
+def test_risk_recovery_to_low_lifecycle():
+    """7. Risk recovery: transition back to LOW resolves active alert and records resolution time."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    
+    manager.process_camera_telemetry("CAM-01", "Gate 1", {"risk_level": "HIGH", "combined_score": 85.0})
+    assert manager.get_camera_alert_status("CAM-01") is not None
+    
+    # Return to LOW
+    manager.process_camera_telemetry("CAM-01", "Gate 1", {"risk_level": "LOW", "combined_score": 15.0})
+    
+    assert manager.get_camera_alert_status("CAM-01") is None
+    assert len(manager.get_active_alerts()) == 0
+    history = manager.get_alert_history()
+    assert len(history) == 2  # 1 ACTIVE/HIGH + 1 RESOLVED
+    assert history[-1].status == "RESOLVED"
+    assert history[-1].resolved_at is not None
+
+
+def test_independent_multi_camera_alert_states():
+    """8. Independent alert generation across multiple cameras without cross-talk."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    
+    manager.process_camera_telemetry("CAM-01", "Entrance", {"risk_level": "HIGH", "combined_score": 82.0})
+    manager.process_camera_telemetry("CAM-02", "Exit", {"risk_level": "LOW", "combined_score": 10.0})
+    manager.process_camera_telemetry("CAM-03", "Plaza", {"severity": "CRITICAL", "risk_level": "CRITICAL", "combined_score": 95.0, "max_density": 50})
+    
+    active = manager.get_active_alerts()
+    assert len(active) == 2
+    active_ids = {a.camera_id for a in active}
+    assert active_ids == {"CAM-01", "CAM-03"}
+    assert manager.get_camera_alert_status("CAM-02") is None
+
+
+def test_alert_acknowledgement_by_camera_and_id():
+    """9. Alert acknowledgement by camera_id and alert_id records operator and timestamp."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    alt = manager.process_camera_telemetry("CAM-01", "Gate 1", {"risk_level": "HIGH", "combined_score": 85.0})
+    
+    # Acknowledge by alert_id
+    ok = manager.acknowledge_alert(alt.alert_id, operator_id="SecurityChief")
+    assert ok is True
+    assert alt.acknowledged is True
+    assert alt.status == "ACKNOWLEDGED"
+    assert alt.acknowledged_by == "SecurityChief"
+    assert alt.acknowledged_at is not None
+
+
+def test_alert_manual_resolution_preserves_history():
+    """10. Manual alert resolution marks alert as RESOLVED and preserves history."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    alt = manager.process_camera_telemetry("CAM-01", "Gate 1", {"risk_level": "HIGH", "combined_score": 85.0})
+    
+    assert manager.get_camera_alert_status("CAM-01") is not None
+    
+    # Manually resolve
+    ok = manager.resolve_alert("CAM-01", operator_id="StationLead", note="Dispersed smoothly")
+    assert ok is True
+    assert manager.get_camera_alert_status("CAM-01") is None
+    assert len(manager.get_active_alerts()) == 0
+    
+    # History preserved
+    hist = manager.get_alert_history()
+    assert len(hist) >= 1
+    resolved_rec = hist[-1]
+    assert resolved_rec.status == "RESOLVED"
+    assert resolved_rec.resolved_by == "StationLead"
+    assert resolved_rec.details.get("resolution_note") == "Dispersed smoothly"
+
+
+def test_alert_history_filtering_and_get_by_id():
+    """11. Alert history filtering by status/camera and get_alert_by_id."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    
+    alt1 = manager.process_camera_telemetry("CAM-01", "Gate 1", {"risk_level": "MEDIUM", "combined_score": 50.0})
+    alt2 = manager.process_camera_telemetry("CAM-02", "Gate 2", {"risk_level": "HIGH", "combined_score": 80.0})
+    manager.resolve_alert("CAM-01", operator_id="Op1")
+    
+    # Query by ID
+    found1 = manager.get_alert_by_id(alt1.alert_id)
+    assert found1 is not None
+    assert found1.alert_id == alt1.alert_id
+    
+    # Filter by camera
+    hist_cam1 = manager.get_alert_history(camera_id="CAM-01")
+    assert all(a.camera_id == "CAM-01" for a in hist_cam1)
+    
+    # Filter by status
+    hist_res = manager.get_alert_history(status="RESOLVED")
+    assert len(hist_res) >= 1
+    assert all(a.status == "RESOLVED" for a in hist_res)
+
+
+def test_alert_summary_metrics():
+    """Verify get_alert_summary counts across alert lifecycle."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    
+    manager.process_camera_telemetry("CAM-01", "Gate 1", {"risk_level": "MEDIUM", "combined_score": 50.0})
+    manager.process_camera_telemetry("CAM-02", "Gate 2", {"risk_level": "HIGH", "combined_score": 80.0})
+    manager.process_camera_telemetry("CAM-03", "Gate 3", {"severity": "CRITICAL", "risk_level": "CRITICAL", "combined_score": 95.0, "max_density": 50})
+    
+    summary_before = manager.get_alert_summary()
+    assert summary_before["active"] == 3
+    assert summary_before["critical"] == 1
+    assert summary_before["high"] == 1
+    assert summary_before["medium"] == 1
+    assert summary_before["resolved"] == 0
+    
+    # Resolve one
+    manager.resolve_alert("CAM-01")
+    summary_after = manager.get_alert_summary()
+    assert summary_after["active"] == 2
+    assert summary_after["resolved"] == 1
+
+
+def test_firebase_write_success_sync():
+    """12. Firebase persistence sync on alert trigger, acknowledge, and resolve."""
+    mock_fb = MagicMock()
+    mock_fb.store_camera_alert.return_value = "ALT_SYNCED_001"
+    mock_fb.update_alert_status.return_value = True
+    
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False, firebase_alert_manager=mock_fb)
+    
+    # 1. Trigger alert
+    alt = manager.process_camera_telemetry("CAM-01", "Entrance", {"risk_level": "HIGH", "combined_score": 85.0})
+    assert mock_fb.store_camera_alert.called
+    stored_payload = mock_fb.store_camera_alert.call_args[0][0]
+    assert stored_payload["camera_id"] == "CAM-01"
+    assert stored_payload["risk_level"] == "HIGH"
+    
+    # 2. Acknowledge
+    manager.acknowledge_alert("CAM-01", operator_id="Admin")
+    assert mock_fb.update_alert_status.called
+    ack_call = mock_fb.update_alert_status.call_args[1]
+    assert ack_call["status"] == "ACKNOWLEDGED"
+    assert ack_call["acknowledged_by"] == "Admin"
+    
+    # 3. Resolve
+    manager.resolve_alert("CAM-01", operator_id="Admin")
+    res_call = mock_fb.update_alert_status.call_args[1]
+    assert res_call["status"] == "RESOLVED"
+    assert res_call["resolved_by"] == "Admin"
+
+
+def test_firebase_failure_handling_resilience():
+    """13. Graceful handling of Firebase connection/write exceptions without crashing."""
+    broken_fb = MagicMock()
+    broken_fb.store_camera_alert.side_effect = ConnectionError("Firebase network down")
+    broken_fb.update_alert_status.side_effect = TimeoutError("RTDB timeout")
+    
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False, firebase_alert_manager=broken_fb)
+    
+    # Processing telemetry should NOT raise exception
+    alt = manager.process_camera_telemetry("CAM-01", "Entrance", {"risk_level": "HIGH", "combined_score": 85.0})
+    assert alt is not None
+    assert alt.status == "ACTIVE"
+    
+    # Acknowledge should NOT raise exception
+    ok_ack = manager.acknowledge_alert("CAM-01")
+    assert ok_ack is True
+    
+    # Resolve should NOT raise exception
+    ok_res = manager.resolve_alert("CAM-01")
+    assert ok_res is True
+
+
+def test_invalid_or_missing_alert_data_resilience():
+    """14. Resilient handling of empty dict, None, NaN, and negative values."""
+    manager = AlertManager(cooldown_seconds=30, enable_local_logging=False)
+    
+    # Empty telemetry
+    alt1 = manager.process_camera_telemetry("CAM-01", "Cam 1", {})
+    assert alt1 is None  # Defaults to LOW, no alert created
+    
+    # None/invalid fields
+    noisy_telemetry = {
+        "risk_level": None,
+        "combined_score": float("nan"),
+        "max_density": -10,
+        "growth_rate": float("inf")
+    }
+    alt2 = manager.process_camera_telemetry("CAM-01", "Cam 1", noisy_telemetry)
+    assert alt2 is None  # Coerced to safe default LOW
+
+
+def test_dashboard_alert_rendering_helpers():
+    """15. Dashboard HTML card generation, history formatting, and rendering integration."""
+    event = AlertEvent(
+        alert_id="ALT_TEST_01",
+        camera_id="CAM-01",
+        camera_name="Main Gate",
+        timestamp="2026-11-16T15:30:00",
+        risk_level="CRITICAL",
+        risk_score=94.5,
+        reason="Critical Crowd Density (38 persons/cell)",
+        status="ACTIVE",
+        severity="CRITICAL",
+        category="CRITICAL_DENSITY",
+        crowd_density=38,
+        person_count=85
+    )
+    
+    # Card HTML
+    html = format_alert_card_html(event)
+    assert "CRITICAL DENSITY ALERT" in html
+    assert "CAM-01" in html
+    assert "38</b> p/cell" in html
+    
+    # History Table Markdown
+    table_md = format_alert_history_table([event])
+    assert "| Time | Camera | Severity | Category | Score | Density | Status | Reason |" in table_md
+    assert "CAM-01" in table_md
+    assert "CRITICAL" in table_md
+    
+    # Mock render call
+    mock_mgr = MagicMock()
+    mock_mgr.get_alert_summary.return_value = {"active": 1, "critical": 1, "high": 0, "medium": 0, "resolved": 0}
+    mock_mgr.get_active_alerts.return_value = [event]
+    mock_mgr.get_alert_history.return_value = [event]
+    
+    mock_summary_ph = MagicMock()
+    mock_feed_ph = MagicMock()
+    mock_hist_ph = MagicMock()
+    
+    render_dashboard_alerts(mock_mgr, mock_summary_ph, mock_feed_ph, mock_hist_ph)
+    assert mock_feed_ph.markdown.called
+    assert mock_hist_ph.markdown.called
+
+
 
 
