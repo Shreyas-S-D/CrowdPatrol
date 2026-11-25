@@ -1,1458 +1,623 @@
 """
-CrowdPatrol 2.0 — Cinematic Landing Page & Narrative Storytelling Module
-Establishes the enterprise-grade visual identity for CROWDPatrol:
-- Nocturnal canvas with electric cyan/cobalt illumination and selective glassmorphism.
-- 5-Chapter Storytelling: The Problem, The Intelligence, The Awareness, The Response, The Platform.
-- Visual AI Surveillance Centerpiece with simulated bounding boxes, vectors, and live HUD telemetry.
-- 8 Core Feature Capabilities and 6-Stage Technology Pipeline.
-- Seamless navigation and deep-linking into the primary Streamlit Monitoring Dashboard.
+CrowdPatrol 2.0 — Unified Dark Control-Room SaaS Landing Page
+Matches the exact Ink/Slate color scheme of the live monitoring dashboard
+(#0b0d14 canvas, #07080d chrome, #11141c cards, #38bdf8 sky-blue accent),
+with real crowd-management photography, plain-English copy, and zero HTML leaks.
 """
 
-from typing import Optional, Callable
+import base64
+from pathlib import Path
 import streamlit as st
 
 try:
-    from dashboard.design_system import (
-        COLOR_TOKENS,
-        TYPOGRAPHY_TOKENS,
-        get_design_system_css,
-        render_surveillance_centerpiece,
-    )
+    from dashboard.design_system import COLOR_TOKENS, TYPOGRAPHY_TOKENS
 except ImportError:
-    from design_system import (
-        COLOR_TOKENS,
-        TYPOGRAPHY_TOKENS,
-        get_design_system_css,
-        render_surveillance_centerpiece,
+    from design_system import COLOR_TOKENS, TYPOGRAPHY_TOKENS
+
+
+def _clean_html(raw: str) -> str:
+    """Strip leading indentation so Streamlit Markdown never parses HTML as code blocks."""
+    return "\n".join(line.strip() for line in raw.splitlines() if line.strip())
+
+
+@st.cache_data(show_spinner=False)
+def _load_asset_b64(filename: str) -> str:
+    asset_path = Path(__file__).resolve().parent / "assets" / filename
+    if not asset_path.exists():
+        return ""
+    return base64.b64encode(asset_path.read_bytes()).decode("ascii")
+
+
+def _brand_logo_html(size: int = 34) -> str:
+    b64 = _load_asset_b64("crowdpatrol_logo.png")
+    if b64:
+        return f'<img src="data:image/png;base64,{b64}" alt="CrowdPatrol Logo" style="width:{size}px; height:{size}px; object-fit:contain; display:block;" />'
+    return (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">'
+        '<rect x="3" y="3" width="58" height="58" rx="14" fill="#07080d" stroke="#38bdf8" stroke-width="3"/>'
+        '<circle cx="32" cy="32" r="5" fill="#38bdf8"/>'
+        '</svg>'
     )
 
 
 def get_landing_page_css() -> str:
-    """
-    Returns the comprehensive CSS stylesheet for the CROWDPatrol 2.0 landing page.
-    Includes both the modern design system and backward-compatible style tokens.
-    """
     c = COLOR_TOKENS
     t = TYPOGRAPHY_TOKENS
-
-    base_css = get_design_system_css()
-
-    extra_css = f"""
+    font_disp = t.get("font_display", t["font_sans"])
+    return _clean_html(f"""
 <style>
-    /* -------------------------------------------------------------------------
-       ADDITIONAL LANDING PAGE EXTENSIONS & STORYTELLING LAYOUT
-       ------------------------------------------------------------------------- */
-    /* Target container constraints */
-    .block-container {{
-        padding-top: 1.25rem !important;
-        padding-bottom: 3.5rem !important;
-        max-width: 1280px !important;
-    }}
-
-    /* Backward compatibility color tokens and anchor offsets */
-    :root {{
-        --cp-navy-dark: #070B14;
-        --cp-navy-surface: #0A0F1D;
-        --cp-navy-card: #0B132B;
-        --cp-blue-accent: #1D4ED8;
-        --cp-cyan-accent: #00D2FF;
-        --cp-cyan-bright: #38BDF8;
-    }}
-
-    .cp-anchor {{
-        position: relative;
-        top: -60px;
-        visibility: hidden;
-    }}
-
-    /* Top Navigation Component */
-    .cp-navbar-container {{
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 14px 26px;
-        background: rgba(8, 15, 32, 0.85);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(0, 217, 255, 0.22);
-        border-radius: 16px;
-        margin-bottom: 32px;
-        box-shadow: 0 10px 32px -4px rgba(0, 0, 0, 0.55), 0 0 20px rgba(0, 217, 255, 0.08);
-    }}
-
-    .cp-brand {{
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        text-decoration: none;
-    }}
-
-    .cp-brand-logo {{
-        width: 42px;
-        height: 42px;
-        background: linear-gradient(135deg, #2563EB 0%, #00D9FF 100%);
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 22px;
-        box-shadow: 0 0 20px rgba(0, 217, 255, 0.5);
-    }}
-
-    .cp-brand-text {{
-        font-family: var(--cp-font-sans);
-        font-size: 1.45rem;
-        font-weight: 800;
-        letter-spacing: -0.02em;
-        color: #FFFFFF;
-        line-height: 1.1;
-    }}
-
-    .cp-brand-text span {{
-        color: #00D9FF;
-    }}
-
-    .cp-brand-sub {{
-        font-family: var(--cp-font-mono);
-        font-size: 0.72rem;
-        font-weight: 600;
-        color: #94A3B8;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-    }}
-
-    .cp-nav-menu {{
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        list-style: none;
-        margin: 0;
-        padding: 0;
-    }}
-
-    .cp-nav-link {{
-        color: #94A3B8;
-        font-size: 0.90rem;
-        font-weight: 600;
-        text-decoration: none;
-        transition: all 0.2s ease;
-        padding: 6px 12px;
-        border-radius: 8px;
-    }}
-
-    .cp-nav-link:hover {{
-        color: #00D9FF;
-        background: rgba(0, 217, 255, 0.10);
-    }}
-
-    /* Hero Section Component */
-    .cp-hero-container {{
-        text-align: center;
-        padding: 40px 16px 28px 16px;
-        margin-bottom: 24px;
-    }}
-
-    .cp-badge-pill {{
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 18px;
-        background: rgba(37, 99, 235, 0.18);
-        border: 1px solid rgba(0, 217, 255, 0.45);
-        border-radius: 9999px;
-        font-family: var(--cp-font-mono);
-        font-size: 0.80rem;
-        font-weight: 700;
-        color: #00D9FF;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        margin-bottom: 24px;
-        box-shadow: 0 0 24px rgba(0, 217, 255, 0.20);
-    }}
-
-    .cp-status-dot {{
-        width: 8px;
-        height: 8px;
-        background-color: #10B981;
-        border-radius: 50%;
-        box-shadow: 0 0 10px #10B981;
-        animation: cp-pulse 2s infinite ease-in-out;
-    }}
-
-    .cp-hero-headline {{
-        font-family: var(--cp-font-sans);
-        font-size: 3.4rem;
-        font-weight: 800;
-        line-height: 1.15;
-        letter-spacing: -0.03em;
-        margin-bottom: 18px;
-        color: #EAF4FF;
-    }}
-
-    .cp-hero-headline .gradient-text {{
-        background: linear-gradient(135deg, #00D9FF 0%, #3B82F6 50%, #8B5CF6 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }}
-
-    .cp-hero-subheading {{
-        font-size: 1.35rem;
-        font-weight: 600;
-        color: #38BDF8;
-        margin-bottom: 14px;
-        letter-spacing: -0.01em;
-    }}
-
-    .cp-hero-description {{
-        font-size: 1.12rem;
-        line-height: 1.7;
-        color: #94A3B8;
-        max-width: 840px;
-        margin: 0 auto 32px auto;
-    }}
-
-    /* Metrics Strip */
-    .cp-metrics-strip {{
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 16px;
-        max-width: 980px;
-        margin: 0 auto 36px auto;
-    }}
-
-    .cp-metric-box {{
-        background: rgba(16, 27, 48, 0.70);
-        border: 1px solid rgba(59, 130, 246, 0.22);
-        border-radius: 12px;
-        padding: 16px 12px;
-        text-align: center;
-        backdrop-filter: blur(10px);
-        transition: transform 0.2s ease, border-color 0.2s ease;
-    }}
-
-    .cp-metric-box:hover {{
-        transform: translateY(-2px);
-        border-color: rgba(0, 217, 255, 0.45);
-    }}
-
-    .cp-metric-value {{
-        font-family: var(--cp-font-mono);
-        font-size: 1.65rem;
-        font-weight: 800;
-        color: #00D9FF;
-        margin-bottom: 4px;
-    }}
-
-    .cp-metric-label {{
-        font-size: 0.82rem;
-        font-weight: 600;
-        color: #EAF4FF;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }}
-
-    .cp-metric-sub {{
-        font-size: 0.72rem;
-        color: #64748B;
-        margin-top: 2px;
-    }}
-
-    /* -------------------------------------------------------------------------
-       STORYTELLING SECTIONS
-       ------------------------------------------------------------------------- */
-    .cp-story-chapter {{
-        background: linear-gradient(180deg, rgba(16, 27, 48, 0.65) 0%, rgba(8, 15, 32, 0.85) 100%);
-        border: 1px solid rgba(59, 130, 246, 0.20);
-        border-radius: 20px;
-        padding: 38px 40px;
-        margin-bottom: 36px;
-        backdrop-filter: blur(14px);
-        box-shadow: 0 12px 36px -6px rgba(0, 0, 0, 0.45);
-        position: relative;
-        overflow: hidden;
-    }}
-
-    .cp-story-chapter::before {{
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 4px;
-        height: 100%;
-        background: linear-gradient(180deg, #00D9FF, #2563EB);
-    }}
-
-    .cp-chapter-badge {{
-        display: inline-block;
-        font-family: var(--cp-font-mono);
-        font-size: 0.75rem;
-        font-weight: 700;
-        color: #00D9FF;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 10px;
-    }}
-
-    .cp-chapter-title {{
-        font-family: var(--cp-font-sans);
-        font-size: 2.0rem;
-        font-weight: 800;
-        color: #EAF4FF;
-        line-height: 1.25;
-        margin-bottom: 16px;
-        letter-spacing: -0.02em;
-    }}
-
-    .cp-chapter-lead {{
-        font-size: 1.08rem;
-        line-height: 1.75;
-        color: #CBD5E1;
-        margin-bottom: 24px;
-    }}
-
-    .cp-story-grid {{
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-        margin-top: 20px;
-    }}
-
-    .cp-story-card {{
-        background: rgba(8, 15, 32, 0.80);
-        border: 1px solid rgba(59, 130, 246, 0.18);
-        border-radius: 12px;
-        padding: 20px;
-    }}
-
-    .cp-story-card-title {{
-        font-size: 1.0rem;
-        font-weight: 700;
-        color: #EAF4FF;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }}
-
-    .cp-story-card-desc {{
-        font-size: 0.88rem;
-        line-height: 1.6;
-        color: #94A3B8;
-    }}
-
-    /* -------------------------------------------------------------------------
-       FEATURES GRID
-       ------------------------------------------------------------------------- */
-    .cp-section-header {{
-        text-align: center;
-        margin-bottom: 36px;
-    }}
-
-    .cp-section-tag {{
-        font-family: var(--cp-font-mono);
-        font-size: 0.78rem;
-        font-weight: 700;
-        color: #00D9FF;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        margin-bottom: 8px;
-    }}
-
-    .cp-section-title {{
-        font-family: var(--cp-font-sans);
-        font-size: 2.4rem;
-        font-weight: 800;
-        color: #EAF4FF;
-        letter-spacing: -0.02em;
-        margin-bottom: 12px;
-    }}
-
-    .cp-section-subtitle {{
-        font-size: 1.05rem;
-        color: #94A3B8;
-        max-width: 720px;
-        margin: 0 auto;
-        line-height: 1.6;
-    }}
-
-    .cp-features-grid {{
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 20px;
-        margin-bottom: 48px;
-    }}
-
-    .cp-feature-card {{
-        background: rgba(16, 27, 48, 0.75);
-        border: 1px solid rgba(59, 130, 246, 0.20);
-        border-radius: 14px;
-        padding: 24px;
-        display: flex;
-        flex-direction: column;
-        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-        backdrop-filter: blur(12px);
-    }}
-
-    .cp-feature-card:hover {{
-        transform: translateY(-4px);
-        border-color: rgba(0, 217, 255, 0.45);
-        box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 217, 255, 0.15);
-    }}
-
-    .cp-feature-icon {{
-        font-size: 1.85rem;
-        margin-bottom: 14px;
-        display: inline-block;
-    }}
-
-    .cp-feature-title {{
-        font-family: var(--cp-font-sans);
-        font-size: 1.12rem;
-        font-weight: 700;
-        color: #EAF4FF;
-        margin-bottom: 10px;
-    }}
-
-    .cp-feature-desc {{
-        font-size: 0.88rem;
-        line-height: 1.6;
-        color: #94A3B8;
-        flex-grow: 1;
-    }}
-
-    .cp-feature-badge {{
-        align-self: flex-start;
-        font-family: var(--cp-font-mono);
-        font-size: 0.70rem;
-        font-weight: 600;
-        padding: 3px 8px;
-        border-radius: 6px;
-        background: rgba(37, 99, 235, 0.18);
-        color: #38BDF8;
-        border: 1px solid rgba(59, 130, 246, 0.30);
-        margin-top: 14px;
-    }}
-
-    /* -------------------------------------------------------------------------
-       PIPELINE SHOWCASE
-       ------------------------------------------------------------------------- */
-    .cp-pipeline-container {{
-        background: rgba(8, 15, 32, 0.85);
-        border: 1px solid rgba(0, 217, 255, 0.25);
-        border-radius: 16px;
-        padding: 32px 24px;
-        margin-bottom: 48px;
-        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
-    }}
-
-    .cp-pipeline-steps {{
-        display: flex;
-        align-items: stretch;
-        justify-content: space-between;
-        gap: 12px;
-        overflow-x: auto;
-        padding: 10px 0;
-    }}
-
-    .cp-pipe-step {{
-        flex: 1;
-        min-width: 150px;
-        background: rgba(16, 27, 48, 0.85);
-        border: 1px solid rgba(59, 130, 246, 0.25);
-        border-radius: 10px;
-        padding: 18px 12px;
-        text-align: center;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        transition: all 0.2s ease;
-        position: relative;
-    }}
-
-    .cp-pipe-step:hover {{
-        border-color: #00D9FF;
-        box-shadow: 0 0 16px rgba(0, 217, 255, 0.2);
-    }}
-
-    .cp-pipe-num {{
-        font-family: var(--cp-font-mono);
-        font-size: 0.72rem;
-        font-weight: 700;
-        color: #00D9FF;
-        margin-bottom: 6px;
-    }}
-
-    .cp-pipe-name {{
-        font-family: var(--cp-font-sans);
-        font-size: 0.88rem;
-        font-weight: 700;
-        color: #EAF4FF;
-        margin-bottom: 6px;
-        line-height: 1.25;
-    }}
-
-    .cp-pipe-meta {{
-        font-size: 0.72rem;
-        color: #94A3B8;
-        line-height: 1.35;
-    }}
-
-    .cp-pipe-arrow {{
-        display: flex;
-        align-items: center;
-        color: #38BDF8;
-        font-size: 1.1rem;
-        font-weight: 700;
-    }}
-
-    /* -------------------------------------------------------------------------
-       TECHNOLOGY CARDS
-       ------------------------------------------------------------------------- */
-    .cp-tech-grid {{
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 16px;
-        margin-bottom: 48px;
-    }}
-
-    .cp-tech-card {{
-        background: rgba(16, 27, 48, 0.70);
-        border: 1px solid rgba(59, 130, 246, 0.18);
-        border-radius: 12px;
-        padding: 18px 16px;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        transition: transform 0.2s ease, border-color 0.2s ease;
-    }}
-
-    .cp-tech-card:hover {{
-        transform: translateY(-2px);
-        border-color: rgba(0, 217, 255, 0.4);
-    }}
-
-    .cp-tech-icon {{
-        font-size: 1.8rem;
-        line-height: 1;
-    }}
-
-    .cp-tech-name {{
-        font-family: var(--cp-font-sans);
-        font-size: 0.95rem;
-        font-weight: 700;
-        color: #EAF4FF;
-    }}
-
-    .cp-tech-role {{
-        font-family: var(--cp-font-mono);
-        font-size: 0.72rem;
-        color: #00D9FF;
-    }}
-
-    /* -------------------------------------------------------------------------
-       APPLICATIONS & ABOUT
-       ------------------------------------------------------------------------- */
-    .cp-apps-grid {{
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 18px;
-        margin-bottom: 48px;
-    }}
-
-    .cp-app-card {{
-        background: rgba(16, 27, 48, 0.65);
-        border: 1px solid rgba(59, 130, 246, 0.18);
-        border-radius: 12px;
-        padding: 22px 18px;
-        transition: all 0.2s ease;
-    }}
-
-    .cp-app-card:hover {{
-        border-color: rgba(0, 217, 255, 0.4);
-        transform: translateY(-2px);
-    }}
-
-    .cp-app-icon {{
-        font-size: 1.8rem;
-        margin-bottom: 12px;
-    }}
-
-    .cp-app-card h4 {{
-        font-size: 1.05rem;
-        font-weight: 700;
-        color: #EAF4FF;
-        margin-bottom: 8px;
-    }}
-
-    .cp-app-card p {{
-        font-size: 0.85rem;
-        line-height: 1.6;
-        color: #94A3B8;
-        margin: 0;
-    }}
-
-    .cp-about-card {{
-        background: linear-gradient(135deg, rgba(16, 27, 48, 0.80) 0%, rgba(8, 15, 32, 0.90) 100%);
-        border: 1px solid rgba(0, 217, 255, 0.22);
-        border-radius: 18px;
-        padding: 36px 40px;
-        margin-bottom: 48px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    }}
-
-    .cp-about-title {{
-        font-size: 1.8rem;
-        font-weight: 800;
-        color: #EAF4FF;
-        margin-bottom: 14px;
-        letter-spacing: -0.02em;
-    }}
-
-    .cp-about-body {{
-        font-size: 0.96rem;
-        line-height: 1.75;
-        color: #CBD5E1;
-        margin-bottom: 20px;
-    }}
-
-    .cp-about-highlights {{
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 18px;
-        margin-top: 24px;
-    }}
-
-    .cp-about-highlight-item {{
-        background: rgba(8, 15, 32, 0.80);
-        border: 1px solid rgba(59, 130, 246, 0.20);
-        border-radius: 10px;
-        padding: 16px;
-    }}
-
-    .cp-about-highlight-item h5 {{
-        font-size: 0.92rem;
-        font-weight: 700;
-        color: #00D9FF;
-        margin-bottom: 6px;
-    }}
-
-    .cp-about-highlight-item p {{
-        font-size: 0.82rem;
-        color: #94A3B8;
-        line-height: 1.5;
-        margin: 0;
-    }}
-
-    /* -------------------------------------------------------------------------
-       FINAL CTA & FOOTER
-       ------------------------------------------------------------------------- */
-    .cp-cta-banner {{
-        background: radial-gradient(circle at 50% 50%, rgba(37, 99, 235, 0.30) 0%, rgba(8, 15, 32, 0.95) 100%);
-        border: 1px solid rgba(0, 217, 255, 0.35);
-        border-radius: 20px;
-        padding: 44px 32px 32px 32px;
-        text-align: center;
-        margin-bottom: 48px;
-        box-shadow: 0 14px 40px -8px rgba(0, 0, 0, 0.6), 0 0 28px rgba(0, 217, 255, 0.12);
-    }}
-
-    .cp-cta-banner h2 {{
-        font-family: var(--cp-font-sans);
-        font-size: 2.3rem;
-        font-weight: 800;
-        color: #EAF4FF;
-        margin-bottom: 12px;
-        letter-spacing: -0.02em;
-    }}
-
-    .cp-cta-banner p {{
-        font-size: 1.08rem;
-        color: #94A3B8;
-        max-width: 680px;
-        margin: 0 auto 28px auto;
-        line-height: 1.6;
-    }}
-
-    .cp-footer {{
-        border-top: 1px solid rgba(59, 130, 246, 0.20);
-        padding-top: 32px;
-        margin-top: 48px;
-    }}
-
-    .cp-footer-top {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-        flex-wrap: wrap;
-        gap: 16px;
-    }}
-
-    .cp-footer-brand-info h4 {{
-        font-family: var(--cp-font-sans);
-        font-size: 1.2rem;
-        font-weight: 800;
-        color: #EAF4FF;
-        margin-bottom: 4px;
-    }}
-
-    .cp-footer-brand-info p {{
-        font-size: 0.85rem;
-        color: #64748B;
-        margin: 0;
-    }}
-
-    .cp-footer-links {{
-        display: flex;
-        gap: 20px;
-    }}
-
-    .cp-footer-link {{
-        font-size: 0.86rem;
-        color: #94A3B8;
-        text-decoration: none;
-        transition: color 0.2s ease;
-    }}
-
-    .cp-footer-link:hover {{
-        color: #00D9FF;
-    }}
-
-    .cp-footer-bottom {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 0.78rem;
-        color: #64748B;
-        border-top: 1px solid rgba(255, 255, 255, 0.05);
-        padding-top: 18px;
-        flex-wrap: wrap;
-        gap: 12px;
-    }}
-
-    /* -------------------------------------------------------------------------
-       RESPONSIVE BREAKPOINTS
-       ------------------------------------------------------------------------- */
-    @media (max-width: 1024px) {{
-        .cp-features-grid,
-        .cp-tech-grid,
-        .cp-apps-grid,
-        .cp-metrics-strip {{
-            grid-template-columns: repeat(2, 1fr);
-        }}
-        .cp-story-grid {{
-            grid-template-columns: 1fr;
-        }}
-        .cp-about-highlights {{
-            grid-template-columns: 1fr;
-        }}
-    }}
-
-    @media (max-width: 768px) {{
-        .cp-hero-headline {{
-            font-size: 2.2rem;
-        }}
-        .cp-nav-menu {{
-            display: none;
-        }}
-        .cp-features-grid,
-        .cp-tech-grid,
-        .cp-apps-grid,
-        .cp-metrics-strip {{
-            grid-template-columns: 1fr;
-        }}
-        .cp-pipeline-steps {{
-            flex-direction: column;
-        }}
-        .cp-pipe-arrow {{
-            justify-content: center;
-            transform: rotate(90deg);
-            padding: 4px 0;
-        }}
-        .cp-story-chapter {{
-            padding: 24px 20px;
-        }}
-        .cp-footer-top,
-        .cp-footer-bottom {{
-            flex-direction: column;
-            text-align: center;
-        }}
-    }}
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+.stApp {{
+    background-color: {c['bg_main']} !important;
+    color: {c['text_primary']} !important;
+    font-family: {t['font_sans']} !important;
+}}
+.block-container {{
+    padding-top: 112px !important;
+    padding-bottom: 2.5rem !important;
+    max-width: 1240px !important;
+}}
+section[data-testid="stSidebar"] {{ display: none !important; }}
+header[data-testid="stHeader"] {{ display: none !important; }}
+
+/* Sticky Fixed Navbar (Taller for clear shield logo visibility) */
+.cp-nav {{
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(1208px, calc(100% - 32px));
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 76px;
+    padding: 13px 24px;
+    background-color: rgba(17, 20, 28, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid {c['hairline_strong']};
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.48);
+}}
+.cp-nav-brand {{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    text-decoration: none !important;
+}}
+.cp-brand-text {{ display: flex; flex-direction: column; line-height: 1.15; }}
+.cp-brand-name {{ font-family: {font_disp}; color: {c['text_primary']}; font-size: 1.22rem; font-weight: 700; letter-spacing: -0.02em; }}
+.cp-brand-sub {{ color: {c['accent']}; font-family: {t['font_mono']}; font-size: 0.68rem; letter-spacing: 0.08em; }}
+.cp-nav-links {{ display: flex; align-items: center; gap: 28px; }}
+.cp-nav-link {{
+    color: {c['text_secondary']} !important;
+    text-decoration: none !important;
+    font-size: 0.9rem;
+    font-weight: 500;
+}}
+.cp-nav-link:hover {{ color: {c['text_primary']} !important; }}
+.cp-nav-actions {{ display: flex; align-items: center; gap: 10px; }}
+.cp-nav-signin {{
+    display: inline-flex; align-items: center; height: 38px; padding: 0 16px;
+    background: {c['surface_raised']}; border: 1px solid {c['hairline_strong']};
+    border-radius: 8px; color: {c['text_primary']} !important;
+    font-size: 0.86rem; font-weight: 500; text-decoration: none !important;
+}}
+.cp-nav-signin:hover {{ background: #222734; }}
+.cp-nav-cta {{
+    display: inline-flex; align-items: center; height: 38px; padding: 0 18px;
+    background: {c['accent']}; border-radius: 8px; color: {c['bg_deepest']} !important;
+    font-size: 0.86rem; font-weight: 600; text-decoration: none !important;
+}}
+.cp-nav-cta:hover {{ background: {c['accent_hover']}; }}
+@media (max-width: 860px) {{ .cp-nav-links {{ display: none; }} }}
+
+/* Asymmetric Hero */
+.cp-hero-grid {{
+    display: grid;
+    grid-template-columns: 1fr 1.12fr;
+    gap: 36px;
+    align-items: center;
+    margin-bottom: 64px;
+}}
+@media (max-width: 920px) {{ .cp-hero-grid {{ grid-template-columns: 1fr; }} }}
+.cp-hero-badge {{
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px; border-radius: 999px;
+    background: {c['accent_subtle']}; border: 1px solid {c['accent_border']};
+    font-family: {t['font_mono']}; font-size: 0.75rem; color: {c['accent']};
+    margin-bottom: 18px;
+}}
+.cp-hero-h1 {{
+    font-family: {font_disp};
+    font-size: clamp(2.05rem, 3.6vw, 3rem);
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: {c['text_primary']};
+    margin: 0 0 16px 0;
+}}
+.cp-hero-p {{
+    font-size: 1rem;
+    line-height: 1.6;
+    color: {c['text_secondary']};
+    margin: 0 0 26px 0;
+    max-width: 540px;
+}}
+.cp-hero-btns {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+.cp-btn-pri {{
+    display: inline-flex; align-items: center; height: 42px; padding: 0 20px;
+    background: {c['accent']}; color: {c['bg_deepest']} !important;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 600; text-decoration: none !important;
+}}
+.cp-btn-pri:hover {{ background: {c['accent_hover']}; }}
+.cp-btn-sec {{
+    display: inline-flex; align-items: center; height: 42px; padding: 0 18px;
+    background: {c['surface_raised']}; color: {c['text_primary']} !important;
+    border: 1px solid {c['hairline_strong']}; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 500; text-decoration: none !important;
+}}
+.cp-btn-sec:hover {{ background: #222734; }}
+
+/* Surveillance Hero Card with Real Image */
+.cp-hero-card {{
+    background: {c['surface_card']};
+    border: 1px solid {c['hairline_strong']};
+    border-radius: 14px;
+    overflow: hidden;
+}}
+.cp-card-top {{
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    background: {c['bg_deepest']};
+    border-bottom: 1px solid {c['hairline']};
+    font-family: {t['font_mono']}; font-size: 0.75rem; color: {c['text_secondary']};
+}}
+.cp-img-wrap {{
+    position: relative;
+    width: 100%;
+    height: 270px;
+    overflow: hidden;
+    background: #07080d;
+}}
+.cp-img-wrap img {{
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    filter: brightness(0.88) contrast(1.06);
+}}
+.cp-img-fade {{
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(11,13,20,0.08) 45%, rgba(11,13,20,0.88) 100%);
+}}
+.cp-img-overlay-stats {{
+    position: absolute; bottom: 12px; left: 12px; right: 12px;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+}}
+.cp-mini-kpi {{
+    background: rgba(7, 8, 13, 0.85);
+    border: 1px solid {c['hairline_strong']};
+    border-radius: 8px;
+    padding: 8px 10px;
+}}
+.cp-mini-k {{ font-size: 0.7rem; color: {c['text_muted']}; }}
+.cp-mini-v {{ font-family: {t['font_mono']}; font-size: 0.92rem; font-weight: 600; color: {c['text_primary']}; }}
+
+/* How It Works Split */
+.cp-sec-head {{ text-align: center; max-width: 680px; margin: 0 auto 32px auto; }}
+.cp-sec-title {{ font-family: {font_disp}; font-size: 1.75rem; font-weight: 700; color: {c['text_primary']}; letter-spacing: -0.025em; margin: 0 0 8px 0; }}
+.cp-sec-sub {{ font-size: 0.96rem; line-height: 1.6; color: {c['text_secondary']}; margin: 0; }}
+
+/* Floating Story Behind the Logo Cloud */
+@keyframes cp-cloud-drift {{
+    0%, 100% {{ transform: translate(0px, 0px); }}
+    25% {{ transform: translate(-8px, -6px); }}
+    50% {{ transform: translate(4px, -11px); }}
+    75% {{ transform: translate(8px, -4px); }}
+}}
+@keyframes cp-cloud-expand {{
+    0% {{ opacity: 0.7; transform: scale(0.88) translateY(8px); }}
+    100% {{ opacity: 1; transform: scale(1) translateY(0); }}
+}}
+details.cp-story-cloud {{
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9998;
+}}
+details.cp-story-cloud:not([open]) {{
+    animation: cp-cloud-drift 7s ease-in-out infinite;
+}}
+details.cp-story-cloud summary.cp-cloud-trigger {{
+    list-style: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: rgba(17, 20, 28, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid {c['accent_border']};
+    border-radius: 999px;
+    color: {c['text_primary']};
+    font-size: 0.84rem;
+    font-weight: 500;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    user-select: none;
+}}
+details.cp-story-cloud summary.cp-cloud-trigger::-webkit-details-marker {{
+    display: none;
+}}
+details.cp-story-cloud summary.cp-cloud-trigger:hover {{
+    border-color: {c['accent']};
+    background: {c['surface_raised']};
+}}
+details.cp-story-cloud[open] {{
+    width: min(500px, calc(100vw - 32px));
+    background: {c['surface_card']};
+    border: 1px solid {c['hairline_strong']};
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.72);
+    overflow: hidden;
+    animation: cp-cloud-expand 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}}
+details.cp-story-cloud[open] summary.cp-cloud-trigger {{
+    width: 100%;
+    justify-content: space-between;
+    border-radius: 0;
+    border: none;
+    border-bottom: 1px solid {c['hairline']};
+    background: {c['bg_deepest']};
+    padding: 12px 18px;
+}}
+.cp-cloud-body {{
+    padding: 20px;
+    display: flex;
+    gap: 18px;
+    align-items: center;
+}}
+@media (max-width: 560px) {{
+    .cp-cloud-body {{ flex-direction: column; text-align: center; }}
+}}
+.cp-cloud-logo {{
+    flex-shrink: 0;
+    width: 148px;
+    height: 148px;
+    background: {c['bg_deepest']};
+    border: 1px solid {c['hairline_strong']};
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+}}
+.cp-cloud-h {{
+    font-family: {font_disp};
+    font-size: 1.08rem;
+    font-weight: 600;
+    color: {c['text_primary']};
+    margin: 0 0 8px 0;
+}}
+.cp-cloud-p {{
+    font-size: 0.84rem;
+    line-height: 1.58;
+    color: {c['text_secondary']};
+    margin: 0 0 8px 0;
+}}
+.cp-cloud-p:last-child {{ margin-bottom: 0; }}
+
+.cp-how-grid {{
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 28px;
+    align-items: center;
+    margin-bottom: 64px;
+    background: {c['surface_card']};
+    border: 1px solid {c['hairline']};
+    border-radius: 14px;
+    padding: 20px;
+}}
+@media (max-width: 900px) {{ .cp-how-grid {{ grid-template-columns: 1fr; }} }}
+.cp-how-img {{
+    width: 100%; height: 290px; object-fit: cover; border-radius: 10px;
+    border: 1px solid {c['hairline']}; display: block;
+}}
+.cp-step {{
+    padding: 12px 14px;
+    background: {c['bg_deepest']};
+    border: 1px solid {c['hairline']};
+    border-radius: 10px;
+    margin-bottom: 10px;
+}}
+.cp-step:last-child {{ margin-bottom: 0; }}
+.cp-step-num {{ font-family: {t['font_mono']}; font-size: 0.74rem; color: {c['accent']}; margin-bottom: 4px; }}
+.cp-step-h {{ font-size: 0.96rem; font-weight: 600; color: {c['text_primary']}; margin-bottom: 4px; }}
+.cp-step-p {{ font-size: 0.85rem; line-height: 1.5; color: {c['text_secondary']}; margin: 0; }}
+
+/* 6-Card Feature Grid */
+.cp-grid-6 {{
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 64px;
+}}
+@media (max-width: 940px) {{ .cp-grid-6 {{ grid-template-columns: repeat(2, 1fr); }} }}
+@media (max-width: 620px) {{ .cp-grid-6 {{ grid-template-columns: 1fr; }} }}
+.cp-feat-card {{
+    background: {c['surface_card']}; border: 1px solid {c['hairline']};
+    border-radius: 12px; padding: 20px;
+}}
+.cp-icon-tile {{
+    width: 34px; height: 34px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-bottom: 12px; border: 1px solid {c['hairline']};
+}}
+.cp-feat-h {{ font-size: 0.98rem; font-weight: 600; color: {c['text_primary']}; margin: 0 0 6px 0; }}
+.cp-feat-p {{ font-size: 0.85rem; line-height: 1.55; color: {c['text_secondary']}; margin: 0; }}
+
+/* Benchmarks */
+.cp-bench-grid {{
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 56px;
+}}
+@media (max-width: 900px) {{ .cp-bench-grid {{ grid-template-columns: repeat(2, 1fr); }} }}
+.cp-bench-card {{
+    background: {c['surface_card']}; border: 1px solid {c['hairline']};
+    border-radius: 12px; padding: 18px 20px;
+}}
+.cp-bench-num {{ font-family: {t['font_mono']}; font-size: 1.65rem; font-weight: 600; color: {c['text_primary']}; margin-bottom: 4px; }}
+.cp-bench-lbl {{ font-size: 0.85rem; color: {c['text_secondary']}; margin-bottom: 2px; }}
+.cp-bench-meta {{ font-family: {t['font_mono']}; font-size: 0.72rem; color: {c['text_muted']}; }}
+
+/* Footer */
+.cp-footer {{
+    background: {c['bg_deepest']};
+    border-top: 1px solid {c['hairline']};
+    border-radius: 12px;
+    padding: 36px 28px 22px 28px;
+    margin-top: 48px;
+}}
+.cp-footer-grid {{
+    display: grid; grid-template-columns: 1.8fr 1fr 1fr 1fr; gap: 28px; margin-bottom: 24px;
+}}
+@media (max-width: 820px) {{ .cp-footer-grid {{ grid-template-columns: 1fr 1fr; }} }}
+.cp-footer-h {{ font-size: 0.85rem; font-weight: 600; color: {c['text_primary']}; margin-bottom: 10px; }}
+.cp-footer-a {{ display: block; font-size: 0.82rem; color: {c['text_muted']} !important; text-decoration: none !important; margin-bottom: 6px; }}
+.cp-footer-a:hover {{ color: {c['text_primary']} !important; }}
+.cp-footer-bot {{
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    padding-top: 16px; border-top: 1px solid {c['hairline']}; font-size: 0.78rem; color: {c['text_muted']};
+}}
 </style>
-"""
-    return base_css + extra_css
+""")
 
 
-def render_landing_page(on_launch: Optional[Callable[[], None]] = None) -> None:
-    """
-    Renders the CROWDPatrol 2.0 public landing page.
-    Args:
-        on_launch: Optional callback invoked when the user enters the command center.
-    """
-    # 1. Inject Comprehensive Global CSS
+def render_saas_landing_page():
+    """Renders the unified dark control-room SaaS landing page."""
     st.markdown(get_landing_page_css(), unsafe_allow_html=True)
 
-    def _do_launch():
-        if on_launch:
-            on_launch()
-        else:
-            st.session_state["current_page"] = "dashboard"
-            st.query_params["page"] = "dashboard"
-            st.rerun()
+    hero_b64 = _load_asset_b64("crowd_hero.jpg")
+    ops_b64 = _load_asset_b64("crowd_ops.jpg")
+    hero_src = f"data:image/jpeg;base64,{hero_b64}" if hero_b64 else ""
+    ops_src = f"data:image/jpeg;base64,{ops_b64}" if ops_b64 else ""
 
-    # ==========================================================================
-    # 2. TOP NAVIGATION BAR
-    # ==========================================================================
-    st.markdown('<div id="hero" class="cp-anchor"></div>', unsafe_allow_html=True)
+    st.markdown(_clean_html(f"""
+<nav class="cp-nav">
+<a class="cp-nav-brand" href="#">
+{_brand_logo_html(50)}
+<div class="cp-brand-text">
+<span class="cp-brand-name">CrowdPatrol</span>
+<span class="cp-brand-sub">CROWD SAFETY</span>
+</div>
+</a>
+<div class="cp-nav-links">
+<a class="cp-nav-link" href="#how-it-works">How It Works</a>
+<a class="cp-nav-link" href="#features">Features</a>
+<a class="cp-nav-link" href="#benchmarks">Benchmarks</a>
+</div>
+<div class="cp-nav-actions">
+<a class="cp-nav-signin" href="#console-access">Sign In</a>
+<a class="cp-nav-cta" href="#console-access">Launch Console →</a>
+</div>
+</nav>
+"""), unsafe_allow_html=True)
 
-    # Render custom HTML Navbar layout with anchor links and interactive action
-    nav_col1, nav_col2 = st.columns([7, 3])
-    with nav_col1:
-        st.markdown(
-            """
-            <div class="cp-navbar-container" style="margin-bottom: 0px;">
-                <a href="#hero" class="cp-brand">
-                    <div class="cp-brand-logo">🛡️</div>
-                    <div>
-                        <div class="cp-brand-text">CROWD<span>PATROL</span></div>
-                        <div class="cp-brand-sub">AI Crowd Safety & Risk Intelligence</div>
-                    </div>
-                </a>
-                <ul class="cp-nav-menu">
-                    <li><a href="#hero" class="cp-nav-link">Home</a></li>
-                    <li><a href="#storytelling" class="cp-nav-link">Story</a></li>
-                    <li><a href="#features" class="cp-nav-link">Features</a></li>
-                    <li><a href="#how-it-works" class="cp-nav-link">How It Works</a></li>
-                    <li><a href="#technology" class="cp-nav-link">Technology</a></li>
-                    <li><a href="#applications" class="cp-nav-link">Applications</a></li>
-                    <li><a href="#about" class="cp-nav-link">About</a></li>
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    with nav_col2:
-        st.write("")  # Spacing alignment
-        if st.button("🚨 Enter Command Center", key="nav_open_dashboard_btn", use_container_width=True, type="primary"):
-            _do_launch()
+    hero_img_tag = f'<img src="{hero_src}" alt="Elevated crowd surveillance view" />' if hero_src else ""
+    st.markdown(_clean_html(f"""
+<section class="cp-hero-grid">
+<div>
+<div class="cp-hero-badge">
+<span class="cp-status-dot cp-status-dot--live"></span>
+<span>Live Crowd Safety Monitoring</span>
+</div>
+<h1 class="cp-hero-h1">Monitor Crowd Density and Spot Safety Risks in Real Time</h1>
+<p class="cp-hero-p">
+CrowdPatrol watches your cameras or recorded video, counts people automatically, detects sudden crowd surges, and alerts your team before congestion turns dangerous.
+</p>
+<div class="cp-hero-btns">
+<a class="cp-btn-pri" href="#console-access">Sign In / Launch Console</a>
+<a class="cp-btn-sec" href="#how-it-works">See How It Works</a>
+</div>
+</div>
+<div class="cp-hero-card">
+<div class="cp-card-top">
+<span><span class="cp-status-dot cp-status-dot--live"></span>DIRECT-01 · Main Concourse</span>
+<span>1280×720 · 43.4 FPS</span>
+</div>
+<div class="cp-img-wrap">
+{hero_img_tag}
+<div class="cp-img-fade"></div>
+<div class="cp-img-overlay-stats">
+<div class="cp-mini-kpi"><div class="cp-mini-k">People</div><div class="cp-mini-v">27</div></div>
+<div class="cp-mini-kpi"><div class="cp-mini-k">Max Density</div><div class="cp-mini-v">6 / cell</div></div>
+<div class="cp-mini-kpi"><div class="cp-mini-k">Anomaly</div><div class="cp-mini-v">0.42</div></div>
+<div class="cp-mini-kpi"><div class="cp-mini-k">Risk</div><div class="cp-mini-v" style="color:#4cc38a;">38.4 · Low</div></div>
+</div>
+</div>
+</div>
+</section>
+"""), unsafe_allow_html=True)
 
-    st.write("")
+    ops_img_tag = f'<img class="cp-how-img" src="{ops_src}" alt="Crowd monitoring operations desk" />' if ops_src else ""
+    st.markdown(_clean_html(f"""
+<div id="how-it-works" class="cp-sec-head">
+<h2 class="cp-sec-title">How CrowdPatrol Works</h2>
+<p class="cp-sec-sub">Three simple steps from camera feed to early warning, designed for venue and security operators.</p>
+</div>
+<div class="cp-how-grid">
+<div>{ops_img_tag}</div>
+<div>
+<div class="cp-step">
+<div class="cp-step-num">Step 01 · Connect Video</div>
+<div class="cp-step-h">Use any webcam, IP camera, or recorded clip</div>
+<p class="cp-step-p">Monitor a single stream in detail or watch up to four feeds together in the 2×2 CCTV Command Center.</p>
+</div>
+<div class="cp-step">
+<div class="cp-step-num">Step 02 · Analyze Crowd</div>
+<div class="cp-step-h">Count people, map density, and track movement</div>
+<p class="cp-step-p">YOLOv8n + DeepSORT track individuals while 4×4 grid heatmaps and optical flow measure crowding and sudden speed surges.</p>
+</div>
+<div class="cp-step">
+<div class="cp-step-num">Step 03 · Act Early</div>
+<div class="cp-step-h">Acknowledge live alerts and notify your team</div>
+<p class="cp-step-p">High and Critical risks trigger browser audio alarms, sidebar Ack/Resolve controls, and verified email notifications.</p>
+</div>
+</div>
+</div>
+"""), unsafe_allow_html=True)
 
-    # ==========================================================================
-    # 3. CINEMATIC HERO SECTION
-    # ==========================================================================
-    st.markdown(
-        """
-        <div class="cp-hero-container">
-            <div class="cp-badge-pill">
-                <span class="cp-status-dot"></span>
-                AUTONOMOUS CROWD SURVEILLANCE &bull; EDGE AI PLATFORM
-            </div>
-            <h1 class="cp-hero-headline">
-                SEE THE CROWD.<br>
-                <span class="gradient-text">BEFORE THE RISK.</span>
-            </h1>
-            <div class="cp-hero-subheading">
-                Smarter Crowd Monitoring. Safer Public Spaces.
-            </div>
-            <p class="cp-hero-description">
-                Intelligent crowd monitoring. Real-time awareness. Smarter public safety. 
-                AI-powered crowd monitoring and risk assessment platform engineered to transform ordinary CCTV feeds 
-                into autonomous, life-saving situational intelligence before critical stampede thresholds occur.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
+    st.markdown(_clean_html("""
+<div id="features" class="cp-sec-head">
+<h2 class="cp-sec-title">Key Capabilities</h2>
+<p class="cp-sec-sub">Everything needed to run crowd safety monitoring on standard hardware.</p>
+</div>
+<div class="cp-grid-6">
+<div class="cp-feat-card">
+<div class="cp-icon-tile" style="background:rgba(56,189,248,0.12);">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+</div>
+<div class="cp-feat-h">People & Head Counting</div>
+<p class="cp-feat-p">Fine-tuned on CrowdHuman (0.5421 mAP@50), with an optional Head Mode for dense overhead crowds.</p>
+</div>
+<div class="cp-feat-card">
+<div class="cp-icon-tile" style="background:rgba(76,195,138,0.12);">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4cc38a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+</div>
+<div class="cp-feat-h">Smooth High-FPS Playback</div>
+<p class="cp-feat-p">Frame-skipping with Kalman prediction reaches 43.43 FPS on CPU without stuttering video playback.</p>
+</div>
+<div class="cp-feat-card">
+<div class="cp-icon-tile" style="background:rgba(245,158,11,0.12);">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+</div>
+<div class="cp-feat-h">Crowd Surge Detection</div>
+<p class="cp-feat-p">Optical flow detects sudden acceleration and directional turbulence while filtering out camera pan.</p>
+</div>
+<div class="cp-feat-card">
+<div class="cp-icon-tile" style="background:rgba(56,189,248,0.12);">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+</div>
+<div class="cp-feat-h">4×4 Spatial Density Map</div>
+<p class="cp-feat-p">Highlights overcrowded zones on a thermal overlay and tracks peak density per grid cell.</p>
+</div>
+<div class="cp-feat-card">
+<div class="cp-icon-tile" style="background:rgba(229,72,77,0.12);">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e5484d" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+</div>
+<div class="cp-feat-h">Anti-Flicker Risk Scoring</div>
+<p class="cp-feat-p">EMA smoothing (α=0.25) and a 5-point hysteresis deadband prevent false alarm flickering.</p>
+</div>
+<div class="cp-feat-card">
+<div class="cp-icon-tile" style="background:rgba(76,195,138,0.12);">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4cc38a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+</div>
+<div class="cp-feat-h">Audio Alarms & Email Alerts</div>
+<p class="cp-feat-p">Plays distinct High beep and Critical siren alarms and emails verified operator accounts automatically.</p>
+</div>
+</div>
+"""), unsafe_allow_html=True)
+
+    st.markdown(_clean_html("""
+<div id="benchmarks" class="cp-sec-head">
+<h2 class="cp-sec-title">Measured Benchmark Results</h2>
+<p class="cp-sec-sub">Tested on Intel Core i7-13700H (CPU mode, 300 steady-state frames from youtube_crowd_test.mp4).</p>
+</div>
+<div class="cp-bench-grid">
+<div class="cp-bench-card"><div class="cp-bench-num">43.43 FPS</div><div class="cp-bench-lbl">Pipeline throughput</div><div class="cp-bench-meta">detect_interval=3 · CPU</div></div>
+<div class="cp-bench-card"><div class="cp-bench-num">7.32x</div><div class="cp-bench-lbl">Frame-skipping speedup</div><div class="cp-bench-meta">43.43 FPS vs 5.93 FPS</div></div>
+<div class="cp-bench-card"><div class="cp-bench-num">17.20x</div><div class="cp-bench-lbl">Optical flow speedup</div><div class="cp-bench-meta">320×180 vs 1280×720</div></div>
+<div class="cp-bench-card"><div class="cp-bench-num">0.5421</div><div class="cp-bench-lbl">CrowdHuman mAP@50</div><div class="cp-bench-meta">+13.06% over baseline</div></div>
+</div>
+<div id="console-access"></div>
+"""), unsafe_allow_html=True)
+
+    story_b64 = _load_asset_b64("story_logo.png") or _load_asset_b64("crowdpatrol_logo.png")
+    story_img = (
+        f'<img src="data:image/png;base64,{story_b64}" alt="CrowdPatrol Story Crest" style="width:128px; height:128px; object-fit:contain; display:block;" />'
+        if story_b64 else _brand_logo_html(128)
     )
-
-    # Hero Key Metrics Strip
-    st.markdown(
-        """
-        <div class="cp-metrics-strip">
-            <div class="cp-metric-box">
-                <div class="cp-metric-value">30+ FPS</div>
-                <div class="cp-metric-label">Real-Time Inference</div>
-                <div class="cp-metric-sub">Target benchmark on tested GPU/CPU</div>
-            </div>
-            <div class="cp-metric-box">
-                <div class="cp-metric-value">Low Latency</div>
-                <div class="cp-metric-label">Edge Ingestion Pipeline</div>
-                <div class="cp-metric-sub">Zero-copy architecture target</div>
-            </div>
-            <div class="cp-metric-box">
-                <div class="cp-metric-value">4&times;4 Grid</div>
-                <div class="cp-metric-label">Spatial Density Mapping</div>
-                <div class="cp-metric-sub">Localized surge & choke analysis</div>
-            </div>
-            <div class="cp-metric-box">
-                <div class="cp-metric-value">Privacy-First</div>
-                <div class="cp-metric-label">Privacy by Design</div>
-                <div class="cp-metric-sub">No facial recognition or biometric ID</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+    story_thumb = (
+        f'<img src="data:image/png;base64,{story_b64}" alt="" style="width:22px; height:22px; object-fit:contain; display:block;" />'
+        if story_b64 else ""
     )
+    st.markdown(_clean_html(f"""
+<details class="cp-story-cloud">
+<summary class="cp-cloud-trigger">
+<span style="display:inline-flex; align-items:center; gap:8px;">
+{story_thumb}
+<span>Story behind the logo</span>
+</span>
+<span style="font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:#38bdf8;">Click to toggle</span>
+</summary>
+<div class="cp-cloud-body">
+<div class="cp-cloud-logo">{story_img}</div>
+<div>
+<h4 class="cp-cloud-h">Inspired by Prevention After the RCB Stampede</h4>
+<p class="cp-cloud-p">
+We were deeply moved by the tragic RCB victory parade stampede in Bengaluru, where preventable overcrowding and delayed situational awareness led to devastating loss of life. That incident inspired us to build CrowdPatrol as an early-warning tool to help prevent future crowd disasters.
+</p>
+<p class="cp-cloud-p">
+In our crest, the <strong>Guardian Lion</strong> stands for vigilant protection, the <strong>Radar Sweep</strong> represents continuous real-time scanning, and the <strong>Crowd</strong> represents the people we aim to safeguard.
+</p>
+</div>
+</div>
+</details>
+"""), unsafe_allow_html=True)
 
-    # Hero Action Buttons
-    h_col1, h_col2, h_col3 = st.columns([3.5, 3.25, 3.25])
-    with h_col1:
-        if st.button("🚨 Enter Command Center", key="hero_launch_dashboard_btn", use_container_width=True, type="primary"):
-            _do_launch()
-    with h_col2:
-        st.markdown(
-            """
-            <a href="#features" style="display:block; text-align:center; padding:9px 16px; background:rgba(16,27,48,0.85); color:#EAF4FF; font-family:var(--cp-font-sans); font-size:0.95rem; font-weight:700; border:1px solid rgba(0,217,255,0.3); border-radius:8px; text-decoration:none; transition:all 0.2s ease;">
-                🔍 Explore Features & Platform
-            </a>
-            """,
-            unsafe_allow_html=True
-        )
-    with h_col3:
-        st.markdown(
-            """
-            <a href="#pipeline" style="display:block; text-align:center; padding:9px 16px; background:rgba(16,27,48,0.85); color:#EAF4FF; font-family:var(--cp-font-sans); font-size:0.95rem; font-weight:700; border:1px solid rgba(0,217,255,0.3); border-radius:8px; text-decoration:none; transition:all 0.2s ease;">
-                ⚡ Discover Technology
-            </a>
-            """,
-            unsafe_allow_html=True
-        )
 
-    st.write("")
-    st.write("")
-
-    # ==========================================================================
-    # 4. VISUAL AI SURVEILLANCE CENTERPIECE
-    # ==========================================================================
-    render_surveillance_centerpiece()
-
-    st.write("")
-    st.write("")
-
-    # ==========================================================================
-    # 5. CINEMATIC 5-CHAPTER STORYTELLING SECTIONS
-    # ==========================================================================
-    st.markdown('<div id="storytelling" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="cp-section-header">
-            <div class="cp-section-tag">Cinematic Platform Narrative</div>
-            <h2 class="cp-section-title">The Evolution of Crowd Safety</h2>
-            <p class="cp-section-subtitle">
-                How autonomous edge computer vision bridges the gap between passive human observation and proactive life-saving intervention.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Chapter 1: The Problem
-    st.markdown(
-        """
-        <div class="cp-story-chapter">
-            <div class="cp-chapter-badge">Chapter 01 &bull; The Vulnerability</div>
-            <h3 class="cp-chapter-title">Thousands of People. One Moment Can Change Everything.</h3>
-            <p class="cp-chapter-lead">
-                In crowded public concourses, religious gatherings, transit hubs, and sports stadiums, catastrophic crowd disasters 
-                rarely happen without early physical precursors. Yet traditional CCTV infrastructure remains entirely passive: 
-                recording video footage for post-disaster postmortems rather than warning security operators before tragedy strikes.
-            </p>
-            <div class="cp-story-grid">
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">❌ Passive CCTV & Human Operator Fatigue</div>
-                    <div class="cp-story-card-desc">
-                        Human operators monitoring banks of 20+ video monitors experience severe cognitive fatigue within 20 minutes, 
-                        missing subtle localized density accumulation and shockwave turbulence in dense pedestrian crowds until physical collapse begins.
-                    </div>
-                </div>
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">⚡ Proactive Intervention Window</div>
-                    <div class="cp-story-card-desc">
-                        Crowd safety literature documents that crowd turbulence and high-density crushes can escalate rapidly once local 
-                        densities exceed critical physical thresholds. Automated monitoring aims to alert safety teams well before physical collapse conditions manifest.
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Chapter 2: The Intelligence
-    st.markdown(
-        """
-        <div class="cp-story-chapter">
-            <div class="cp-chapter-badge">Chapter 02 &bull; The Neural Engine</div>
-            <h3 class="cp-chapter-title">From Pixels to Intelligence.</h3>
-            <p class="cp-chapter-lead">
-                CROWDPatrol converts raw unstructured camera pixels into actionable mathematical telemetry. 
-                Using high-performance dual-model deep learning, the platform detects, localizes, and tracks every individual 
-                at 30+ frames per second directly on commodity edge processors.
-            </p>
-            <div class="cp-story-grid">
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">👥 Person Mode (YOLOv8 &bull; 640&times;640)</div>
-                    <div class="cp-story-card-desc">
-                        Standard concourses, pedestrian plazas, and perimeter walkways are analyzed with full-body bounding box detection 
-                        optimized for standing, walking, and moving crowds under variable lighting conditions.
-                    </div>
-                </div>
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">🎯 Head Mode (Overhead Crowd Counting)</div>
-                    <div class="cp-story-card-desc">
-                        In extreme high-density choke points where human bodies occlude one another, CROWDPatrol dynamically activates overhead head-detection 
-                        (640&times;640 resolution, 0.25 confidence) to preserve count accuracy when bodies are hidden from camera perspective.
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Chapter 3: The Awareness
-    st.markdown(
-        """
-        <div class="cp-story-chapter">
-            <div class="cp-chapter-badge">Chapter 03 &bull; Spatial Understanding</div>
-            <h3 class="cp-chapter-title">See What Ordinary Cameras Cannot.</h3>
-            <p class="cp-chapter-lead">
-                Individual detections are only the foundation. CROWDPatrol models collective crowd physics across space and time. 
-                By subdividing camera viewports into dynamic 4&times;4 spatial density grids and analyzing Farneback dense optical flow vectors, 
-                the system visualizes invisible pressure gradients, turbulence, and sudden counter-directional movements.
-            </p>
-            <div class="cp-story-grid">
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">🔥 4&times;4 Spatial Grid & Peak Cell Analysis</div>
-                    <div class="cp-story-card-desc">
-                        Rather than averaging density across a whole camera view, CROWDPatrol isolates localized choke points. 
-                        If an exit door or stairwell experiences acute congestion while the main hall is empty, the system pinpoints the exact cell.
-                    </div>
-                </div>
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">🌊 Thermal Density Heatmaps & Flow Vectors</div>
-                    <div class="cp-story-card-desc">
-                        Live Gaussian kernel density estimation generates real-time thermal overlays while Farneback optical flow extracts 
-                        motion vector fields, detecting rapid panic surges, directional deadlocks, and counterflow turbulence.
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Chapter 4: The Response
-    st.markdown(
-        """
-        <div class="cp-story-chapter">
-            <div class="cp-chapter-badge">Chapter 04 &bull; Autonomous Action</div>
-            <h3 class="cp-chapter-title">Recognize Risk. Stay Ahead.</h3>
-            <p class="cp-chapter-lead">
-                Data without automated escalation is ineffective. CROWDPatrol features a composite mathematical Risk Engine 
-                that combines spatial density (65% weight) and anomalous crowd velocity (35% weight) into an unambiguous 0–100 Risk Score. 
-                When critical risk thresholds are crossed, emergency protocols trigger automatically without human delay.
-            </p>
-            <div class="cp-story-grid">
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">🚨 Multi-Tier Risk Escalation</div>
-                    <div class="cp-story-card-desc">
-                        Color-coded operational alert tiers (NORMAL &bull; CAUTION &bull; WARNING &bull; CRITICAL) give security supervisors 
-                        instant situational clarity, backed by moving-average hysteresis filters to eliminate false-positive jitter.
-                    </div>
-                </div>
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">📡 Real-Time Dispatch: Firebase + SMTP</div>
-                    <div class="cp-story-card-desc">
-                        Critical emergency events automatically dispatch detailed email incident alerts via secure SMTP and synchronize 
-                        sub-second event records to Firebase Realtime Database for mobile field personnel and cloud command centers.
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Chapter 5: The Platform
-    st.markdown(
-        """
-        <div class="cp-story-chapter">
-            <div class="cp-chapter-badge">Chapter 05 &bull; The Enterprise Architecture</div>
-            <h3 class="cp-chapter-title">One Platform. Complete Crowd Intelligence.</h3>
-            <p class="cp-chapter-lead">
-                Built from the ground up for command centers, municipal safety departments, transit authorities, and event organizers. 
-                CROWDPatrol unites multi-camera RTSP ingestion, high-FPS interactive telemetry, and strict Privacy-by-Design 
-                into a cohesive, low-footprint platform.
-            </p>
-            <div class="cp-story-grid">
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">🎥 Multi-Camera Synchronous Grid</div>
-                    <div class="cp-story-card-desc">
-                        Ingest up to 4 simultaneous live RTSP video streams, USB webcams, or phone camera feeds. 
-                        Seamlessly switch between high-level 2&times;2 grid situational awareness and granular Focus Feed inspection.
-                    </div>
-                </div>
-                <div class="cp-story-card">
-                    <div class="cp-story-card-title">🔒 Strict Privacy by Design</div>
-                    <div class="cp-story-card-desc">
-                        CROWDPatrol strictly calculates density, velocity, and spatial physics. It performs zero facial recognition, 
-                        zero biometric fingerprinting, and captures no Personally Identifiable Information (PII)—ensuring full ethical compliance.
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.write("")
-    st.write("")
-
-    # ==========================================================================
-    # 6. FEATURE SHOWCASE (8 CORE CAPABILITIES)
-    # ==========================================================================
-    st.markdown('<div id="features" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="cp-section-header">
-            <div class="cp-section-tag">Autonomous Edge Intelligence</div>
-            <h2 class="cp-section-title">Core Safety Capabilities</h2>
-            <p class="cp-section-subtitle">
-                Eight specialized computer vision and crowd dynamics technologies operating in unison.
-            </p>
-        </div>
-        <div class="cp-features-grid">
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">👥</div>
-                <div class="cp-feature-title">Person Detection</div>
-                <div class="cp-feature-desc">
-                    High-performance YOLOv8 model operating at 640&times;640 resolution to detect individuals in wide pedestrian areas, plazas, and open corridors.
-                </div>
-                <div class="cp-feature-badge">YOLOv8 &bull; 640&times;640</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">🎯</div>
-                <div class="cp-feature-title">Head Detection</div>
-                <div class="cp-feature-desc">
-                    Specialized overhead crowd counting model engineered to preserve accurate person counts in densely occluded environments where full bodies are hidden.
-                </div>
-                <div class="cp-feature-badge">YOLOv8 Head Model</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">🔄</div>
-                <div class="cp-feature-title">Multi-Object Tracking</div>
-                <div class="cp-feature-desc">
-                    DeepSORT tracker paired with MobileNetV2 appearance embedding and Kalman filtering to maintain persistent individual IDs across temporary occlusions.
-                </div>
-                <div class="cp-feature-badge">DeepSORT + MobileNetV2</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">📊</div>
-                <div class="cp-feature-title">Crowd Density Analysis</div>
-                <div class="cp-feature-desc">
-                    Dynamic 4&times;4 spatial grid mapping localized crowd concentrations and peak cell density metrics to pinpoint bottleneck danger zones.
-                </div>
-                <div class="cp-feature-badge">4&times;4 Spatial Grid</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">🔥</div>
-                <div class="cp-feature-title">Thermal Density Heatmaps</div>
-                <div class="cp-feature-desc">
-                    Real-time Gaussian kernel density estimation producing intuitive color-coded overlays that highlight crowd accumulation areas instantaneously.
-                </div>
-                <div class="cp-feature-badge">Gaussian Heatmap Overlay</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">🌊</div>
-                <div class="cp-feature-title">Motion & Anomaly Analysis</div>
-                <div class="cp-feature-desc">
-                    Farneback dense optical flow tracking crowd velocity vectors, identifying sudden panic runs, directional deadlocks, and turbulent counterflow.
-                </div>
-                <div class="cp-feature-badge">Farneback Optical Flow</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">⚠️</div>
-                <div class="cp-feature-title">Risk Assessment</div>
-                <div class="cp-feature-desc">
-                    Composite multi-factor risk scoring engine combining spatial crowd density (65%) and velocity anomaly (35%) into an actionable 0–100 index.
-                </div>
-                <div class="cp-feature-badge">Composite Metric Engine</div>
-            </div>
-            <div class="cp-feature-card">
-                <div class="cp-feature-icon">🚨</div>
-                <div class="cp-feature-title">Automated Alerts</div>
-                <div class="cp-feature-desc">
-                    Automated email alerts via secure SMTP and instant cloud synchronization to Firebase Realtime Database with actionable spatial coordinates.
-                </div>
-                <div class="cp-feature-badge">SMTP + Firebase RTDB</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # ==========================================================================
-    # 7. HOW IT WORKS / PIPELINE SHOWCASE
-    # ==========================================================================
-    st.markdown('<div id="how-it-works" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div id="pipeline" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="cp-section-header">
-            <div class="cp-section-tag">System Architecture</div>
-            <h2 class="cp-section-title">End-to-End Processing Pipeline</h2>
-            <p class="cp-section-subtitle">
-                End-to-end edge architecture designed for low-latency detection, tracking, and risk alerting.
-            </p>
-        </div>
-        <div class="cp-pipeline-container">
-            <div class="cp-pipeline-steps">
-                <div class="cp-pipe-step">
-                    <div class="cp-pipe-num">STAGE 01</div>
-                    <div class="cp-pipe-name">Video Input</div>
-                    <div class="cp-pipe-meta">RTSP / USB / File<br>Zero-copy frame capture</div>
-                </div>
-                <div class="cp-pipe-arrow">&rarr;</div>
-                <div class="cp-pipe-step">
-                    <div class="cp-pipe-num">STAGE 02</div>
-                    <div class="cp-pipe-name">YOLOv8 Detection</div>
-                    <div class="cp-pipe-meta">640&times;640 resolution<br>Person / Head Bboxes</div>
-                </div>
-                <div class="cp-pipe-arrow">&rarr;</div>
-                <div class="cp-pipe-step">
-                    <div class="cp-pipe-num">STAGE 03</div>
-                    <div class="cp-pipe-name">DeepSORT Tracking</div>
-                    <div class="cp-pipe-meta">MobileNetV2 ReID<br>Kalman trajectory state</div>
-                </div>
-                <div class="cp-pipe-arrow">&rarr;</div>
-                <div class="cp-pipe-step">
-                    <div class="cp-pipe-num">STAGE 04</div>
-                    <div class="cp-pipe-name">Density & Motion</div>
-                    <div class="cp-pipe-meta">4&times;4 spatial grid<br>Farneback optical flow</div>
-                </div>
-                <div class="cp-pipe-arrow">&rarr;</div>
-                <div class="cp-pipe-step">
-                    <div class="cp-pipe-num">STAGE 05</div>
-                    <div class="cp-pipe-name">Risk Assessment</div>
-                    <div class="cp-pipe-meta">Composite 0–100 score<br>Density 65% + Flow 35%</div>
-                </div>
-                <div class="cp-pipe-arrow">&rarr;</div>
-                <div class="cp-pipe-step">
-                    <div class="cp-pipe-num">STAGE 06</div>
-                    <div class="cp-pipe-name">Dashboard & Alerts</div>
-                    <div class="cp-pipe-meta">Live HUD telemetry<br>SMTP + Firebase RTDB</div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # ==========================================================================
-    # 8. TECHNOLOGY STACK
-    # ==========================================================================
-    st.markdown('<div id="technology" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="cp-section-header">
-            <div class="cp-section-tag">Engineering Foundation</div>
-            <h2 class="cp-section-title">Enterprise Technology Stack</h2>
-            <p class="cp-section-subtitle">
-                Built on battle-tested open-source frameworks and modern cloud architectures.
-            </p>
-        </div>
-        <div class="cp-tech-grid">
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">👁️</div>
-                <div>
-                    <div class="cp-tech-name">YOLOv8</div>
-                    <div class="cp-tech-role">Ultralytics Neural Detector</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">🎯</div>
-                <div>
-                    <div class="cp-tech-name">DeepSORT</div>
-                    <div class="cp-tech-role">Multi-Object Tracking</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">🧠</div>
-                <div>
-                    <div class="cp-tech-name">MobileNetV2</div>
-                    <div class="cp-tech-role">Appearance Embedder (ReID)</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">⚡</div>
-                <div>
-                    <div class="cp-tech-name">OpenCV</div>
-                    <div class="cp-tech-role">Computer Vision & Optical Flow</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">🐍</div>
-                <div>
-                    <div class="cp-tech-name">Python</div>
-                    <div class="cp-tech-role">High-Performance Runtime</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">📊</div>
-                <div>
-                    <div class="cp-tech-name">Streamlit</div>
-                    <div class="cp-tech-role">Interactive Live Dashboard</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">🔥</div>
-                <div>
-                    <div class="cp-tech-name">Firebase</div>
-                    <div class="cp-tech-role">Realtime Cloud DB & Sync</div>
-                </div>
-            </div>
-            <div class="cp-tech-card">
-                <div class="cp-tech-icon">📧</div>
-                <div>
-                    <div class="cp-tech-name">SMTP Dispatcher</div>
-                    <div class="cp-tech-role">Automated Emergency Email Alerts</div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # ==========================================================================
-    # 9. DEPLOYMENT APPLICATIONS
-    # ==========================================================================
-    st.markdown('<div id="applications" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="cp-section-header">
-            <div class="cp-section-tag">Operational Venues</div>
-            <h2 class="cp-section-title">Deployment Scenarios</h2>
-            <p class="cp-section-subtitle">
-                Engineered for any public venue where crowd safety and density management are paramount.
-            </p>
-        </div>
-        <div class="cp-apps-grid">
-            <div class="cp-app-card">
-                <div class="cp-app-icon">🏛️</div>
-                <h4>Public Gatherings</h4>
-                <p>Municipal plazas, political rallies, cultural parades, and open-air public exhibitions managing high-density pedestrian flow.</p>
-            </div>
-            <div class="cp-app-card">
-                <div class="cp-app-icon">🎪</div>
-                <h4>Festivals & Concerts</h4>
-                <p>Music festivals, pilgrim processions, and religious events requiring continuous monitoring of stage fronts and choke corridors.</p>
-            </div>
-            <div class="cp-app-card">
-                <div class="cp-app-icon">🏟️</div>
-                <h4>Stadiums & Arenas</h4>
-                <p>Sports complexes and entertainment arenas managing synchronized gate ingress, concession bottlenecks, and post-match exit crushes.</p>
-            </div>
-            <div class="cp-app-card">
-                <div class="cp-app-icon">🚆</div>
-                <h4>Transport Hubs</h4>
-                <p>Metro railway stations, international airport terminals, and bus interchanges experiencing intense recurring commuter volume peaks.</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # ==========================================================================
-    # 10. ABOUT & ACADEMIC CREDITS
-    # ==========================================================================
-    st.markdown('<div id="about" class="cp-anchor"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="cp-about-card">
-            <div class="cp-section-tag" style="text-align: left;">Academic & Engineering Background</div>
-            <h3 class="cp-about-title">About the CrowdPatrol Project</h3>
-            <p class="cp-about-body">
-                Crowd disasters and stampedes around the globe have claimed thousands of lives due to delayed human reaction and lack of automated situational awareness. 
-                Traditional CCTV surveillance relies heavily on human operators who experience cognitive fatigue when monitoring dozens of simultaneous camera feeds.
-            </p>
-            <p class="cp-about-body">
-                <strong>CrowdPatrol</strong> was conceived and developed as a <strong>Final Year Major Project</strong> at 
-                <strong>AMC Engineering College</strong> (Department of Computer Science & Engineering) to solve this challenge through proactive, automated edge-intelligence. 
-                By shifting surveillance from passive recording to active autonomous risk assessment, CrowdPatrol alerts safety officers the moment crowd density or panic velocity crosses safe operational thresholds.
-            </p>
-            <div class="cp-about-highlights">
-                <div class="cp-about-highlight-item">
-                    <h5>🔒 Privacy by Design</h5>
-                    <p>Focuses on crowd physics, density gradients, and motion dynamics rather than invasive individual facial recognition.</p>
-                </div>
-                <div class="cp-about-highlight-item">
-                    <h5>⚡ Low Latency Edge Ingestion</h5>
-                    <p>Optimized for lightweight commodity hardware, edge cameras, and mobile phone RTSP streams.</p>
-                </div>
-                <div class="cp-about-highlight-item">
-                    <h5>🎓 Academic Research Focus</h5>
-                    <p>Engineered with reproducible benchmarks, modular pipeline components, and standardized evaluation protocols.</p>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # ==========================================================================
-    # 11. FINAL CALL TO ACTION BANNER
-    # ==========================================================================
-    st.markdown(
-        """
-        <div class="cp-cta-banner">
-            <h2>Ready to Monitor Crowd Situational Safety?</h2>
-            <p>
-                Launch the live interactive command center now to test webcam streams, multi-camera CCTV grids, 
-                real-time heatmaps, and automated emergency notification dispatchers.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Final CTA Launch Button
-    cta_l, cta_c, cta_r = st.columns([3, 4, 3])
-    with cta_c:
-        if st.button("🚀 Enter Command Center", key="cta_launch_dashboard_btn", use_container_width=True, type="primary"):
-            _do_launch()
-
-    # ==========================================================================
-    # 12. FOOTER SECTION
-    # ==========================================================================
-    st.markdown(
-        """
-        <footer class="cp-footer">
-            <div class="cp-footer-top">
-                <div class="cp-footer-brand-info">
-                    <h4>🛡️ CrowdPatrol</h4>
-                    <p>Autonomous AI Crowd Monitoring & Emergency Risk Mitigation Platform</p>
-                </div>
-                <div class="cp-footer-links">
-                    <a href="#hero" class="cp-footer-link">Home</a>
-                    <a href="#storytelling" class="cp-footer-link">Story</a>
-                    <a href="#features" class="cp-footer-link">Features</a>
-                    <a href="#how-it-works" class="cp-footer-link">How It Works</a>
-                    <a href="#technology" class="cp-footer-link">Technology</a>
-                    <a href="#applications" class="cp-footer-link">Applications</a>
-                    <a href="#about" class="cp-footer-link">About</a>
-                </div>
-            </div>
-            <div class="cp-footer-bottom">
-                <div>
-                    AMC Engineering College — Department of Computer Science & Engineering<br>
-                    Final Year Major Project (7th/8th Semester)
-                </div>
-                <div>
-                    Academic Prototype Notice: For experimental crowd density & safety research benchmarking.
-                </div>
-            </div>
-        </footer>
-        """,
-        unsafe_allow_html=True
-    )
+def render_landing_footer():
+    st.markdown(_clean_html(f"""
+<footer class="cp-footer">
+<div class="cp-footer-grid">
+<div>
+<div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+{_brand_logo_html(28)}
+<span style="font-size:0.98rem; font-weight:600; color:#eef0f5;">CrowdPatrol</span>
+</div>
+<p style="font-size:0.82rem; line-height:1.55; color:#7a8296; margin:0 0 10px 0; max-width:300px;">
+Autonomous crowd density, optical flow anomaly detection, and multi-camera safety monitoring platform.
+</p>
+<div style="font-family:'JetBrains Mono',monospace; font-size:0.74rem; color:#38bdf8;">YOLOv8n · DeepSORT · Farneback · SQLite</div>
+</div>
+<div>
+<div class="cp-footer-h">Product</div>
+<a class="cp-footer-a" href="#how-it-works">How It Works</a>
+<a class="cp-footer-a" href="#features">Features</a>
+<a class="cp-footer-a" href="#benchmarks">Benchmarks</a>
+</div>
+<div>
+<div class="cp-footer-h">Application</div>
+<a class="cp-footer-a" href="#console-access">Direct Stream</a>
+<a class="cp-footer-a" href="#console-access">2×2 CCTV Grid</a>
+<a class="cp-footer-a" href="#console-access">Remote Telemetry</a>
+</div>
+<div>
+<div class="cp-footer-h">Account</div>
+<a class="cp-footer-a" href="#console-access">Sign In</a>
+<a class="cp-footer-a" href="#console-access">Create Account</a>
+<a class="cp-footer-a" href="#console-access">Email Verification</a>
+</div>
+</div>
+<div class="cp-footer-bot">
+<span>© 2026 CrowdPatrol. Real-time crowd safety and operational intelligence.</span>
+<span>YOLOv8n + DeepSORT + Farneback Optical Flow</span>
+</div>
+</footer>
+"""), unsafe_allow_html=True)

@@ -124,7 +124,22 @@ def init_firebase():
             return False
 
 # ========== PAGE SETUP ==========
-st.set_page_config(page_title="CrowdPatrol High-FPS Dashboard", page_icon="🚨", layout="wide")
+_ICON_PATH = Path(__file__).resolve().parent / "crowdpatrol_icon.png"
+st.set_page_config(
+    page_title="CrowdPatrol",
+    page_icon=str(_ICON_PATH) if _ICON_PATH.exists() else None,
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+try:
+    from dashboard.design_system import get_design_system_css
+    from dashboard.landing_page import render_saas_landing_page, render_landing_footer
+except ImportError:
+    from design_system import get_design_system_css
+    from landing_page import render_saas_landing_page, render_landing_footer
+
+st.markdown(get_design_system_css(), unsafe_allow_html=True)
 
 # ========== MINIMAL AUTHENTICATION GATE ==========
 from src.demo_auth import (
@@ -147,29 +162,26 @@ if user_count() == 0:
     provision_user("admin", "CrowdPatrolDemo2026!", role="Administrator", email="shreyaskeyboardtutorials@gmail.com")
 
 if not st.session_state.get("authenticated", False):
-    _, col_auth, _ = st.columns([1, 2.0, 1])
+    render_saas_landing_page()
+
+    _, col_auth, _ = st.columns([1, 1.8, 1])
     with col_auth:
-        st.markdown("""
-        <div style="text-align: center; margin-top: 40px; margin-bottom: 20px;">
-            <h1 style="margin: 0; font-size: 2.3rem;">🚨 CrowdPatrol</h1>
-            <p style="color: #94A3B8; font-size: 0.95rem; margin-top: 6px;">
-                Autonomous High-FPS Crowd Density & Anomaly Monitoring Platform
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div style="background:#11141c; border:1px solid rgba(238,240,245,0.08); border-radius:12px; padding:18px 20px; margin-bottom:14px;">'
+            '<div style="font-family:\'JetBrains Mono\',monospace; font-size:0.74rem; color:#38bdf8; margin-bottom:4px;">Console Access</div>'
+            '<div style="font-size:1.25rem; font-weight:600; color:#eef0f5; margin-bottom:4px;">Sign in to your monitoring workspace</div>'
+            '<div style="font-size:0.86rem; color:#a3a9b8;">Each operator profile keeps separate camera slots, email alert routing, and alert history.</div>'
+            '</div>',
+            unsafe_allow_html=True
+        )
         
-        tab_login, tab_register = st.tabs(["🔑 Sign In", "✨ Create Account"])
+        tab_login, tab_register = st.tabs(["Sign in", "Create account"])
         
         with tab_login:
-            st.markdown("""
-            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem; color: #CBD5E1;">
-                🔒 Sign in to access your personalized CCTV cameras, alerts, and logs.
-            </div>
-            """, unsafe_allow_html=True)
             with st.form("demo_login_form"):
-                login_user = st.text_input("Username or Registered Email", placeholder="e.g. admin or yourname@example.com")
-                login_pass = st.text_input("Password", type="password", placeholder="Enter your password")
-                submit_login = st.form_submit_button("Sign In to Command Center", type="primary", use_container_width=True)
+                login_user = st.text_input("Username or registered email", placeholder="admin or operator@example.com")
+                login_pass = st.text_input("Password", type="password", placeholder="Password")
+                submit_login = st.form_submit_button("Sign in to command center", type="primary", use_container_width=True)
                 
                 if submit_login:
                     user_info = authenticate_user(login_user, login_pass)
@@ -184,26 +196,26 @@ if not st.session_state.get("authenticated", False):
                         dispatcher = get_notification_dispatcher()
                         dispatcher.set_user_email_recipient(user_info["email"])
                         
-                        st.success(f"Welcome back, {user_info['username']}! Alerts routed to: {user_info['email']}")
+                        st.success(f"Signed in as {user_info['username']}. Alerts routed to {user_info['email']}")
                         st.rerun()
                     else:
-                        st.error("Authentication failed. Invalid username/email or password.")
+                        st.error("Authentication failed. Invalid username, email, or password.")
 
         with tab_register:
             st.markdown("""
-            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem; color: #CBD5E1;">
-                📝 <strong>Verified Account Creation</strong>: Your email will be verified with a 6-digit code before account creation to ensure alerts reach you without confusion.
+            <div style="background: #11141c; border: 1px solid rgba(238, 240, 245, 0.08); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 0.82rem; color: #a3a9b8;">
+                Your email is verified with a 6-digit code before account creation so alerts route accurately.
             </div>
             """, unsafe_allow_html=True)
             
             # Step 1: Input details and Request Verification Code
             if not st.session_state.get("reg_code_sent", False):
                 with st.form("demo_register_step1_form"):
-                    reg_username = st.text_input("Username", value=st.session_state.get("reg_saved_username", ""), placeholder="e.g. security_lead")
-                    reg_email = st.text_input("Email Address (Alerts will route here)", value=st.session_state.get("reg_saved_email", ""), placeholder="e.g. yourname@example.com")
+                    reg_username = st.text_input("Username", value=st.session_state.get("reg_saved_username", ""), placeholder="security_lead")
+                    reg_email = st.text_input("Email address", value=st.session_state.get("reg_saved_email", ""), placeholder="operator@example.com")
                     reg_pass = st.text_input("Password (min 6 characters)", type="password", placeholder="Choose a password")
-                    reg_pass_confirm = st.text_input("Confirm Password", type="password", placeholder="Re-enter password")
-                    send_code_btn = st.form_submit_button("📩 Send Email Verification Code", type="primary", use_container_width=True)
+                    reg_pass_confirm = st.text_input("Confirm password", type="password", placeholder="Re-enter password")
+                    send_code_btn = st.form_submit_button("Send verification code", type="primary", use_container_width=True)
                     
                     if send_code_btn:
                         from src.demo_auth import validate_email
@@ -295,7 +307,7 @@ if not st.session_state.get("authenticated", False):
                     st.session_state.pop("reg_expected_otp", None)
                     st.rerun()
         
-        st.caption("Administrator defaults send to `shreyaskeyboardtutorials@gmail.com`. Each account maintains independent camera slots & alert history.")
+    render_landing_footer()
     st.stop()
 
 # Ensure active user notification recipient is synchronized on session resume
@@ -303,9 +315,16 @@ user_active_email = st.session_state.get("user_email")
 if user_active_email:
     get_notification_dispatcher().set_user_email_recipient(user_active_email)
 
-st.title("🚨 CrowdPatrol - Autonomous Crowd Monitoring Dashboard")
+st.title("CrowdPatrol - Autonomous Crowd Monitoring Dashboard")
 
-st.caption("ℹ️ **Academic Prototype Notice**: CrowdPatrol is an experimental prototype for automated crowd density and motion-anomaly monitoring. System output represents relative metric indications for tested benchmark scenarios.")
+_live_state_cls = "cp-status-dot--live" if st.session_state.get("is_monitoring", False) else "cp-status-dot--standby"
+_live_state_txt = "LIVE" if st.session_state.get("is_monitoring", False) else "STANDBY"
+st.markdown(f"""
+<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid rgba(238,240,245,0.08); font-size:0.82rem; color:#a3a9b8;">
+    <div><span class="cp-status-dot {_live_state_cls}"></span><span class="cp-mono">{_live_state_txt}</span> · Real-time crowd density, motion-anomaly, and multi-camera monitoring</div>
+    <div class="cp-mono">Operator: {st.session_state.get('username', 'Operator')}</div>
+</div>
+""", unsafe_allow_html=True)
 
 fb_initialized = init_firebase()
 
@@ -324,15 +343,15 @@ if 'is_monitoring' not in st.session_state:
 # ========== SIDEBAR MODE & CONFIGURATION ==========
 user_email_disp = st.session_state.get('user_email', 'shreyaskeyboardtutorials@gmail.com')
 st.sidebar.markdown(f"""
-<div style="background: #1E293B; border: 1px solid #334155; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;">
-    <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-weight: 600;">Active Operator</div>
-    <div style="font-size: 0.92rem; color: #F8FAFC; font-weight: 500;">👤 {st.session_state.get('username', 'Operator')}</div>
-    <div style="font-size: 0.75rem; color: #38BDF8;">Role: {st.session_state.get('role', 'Administrator')}</div>
-    <div style="font-size: 0.72rem; color: #A7F3D0; margin-top: 4px; word-break: break-all;">✉️ Alerts: {user_email_disp}</div>
+<div style="background: #11141c; border: 1px solid rgba(238, 240, 245, 0.08); border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+    <div style="font-size: 0.75rem; color: #7a8296; margin-bottom: 4px;">Active operator</div>
+    <div style="font-size: 0.92rem; color: #eef0f5; font-weight: 500;">{st.session_state.get('username', 'Operator')}</div>
+    <div style="font-size: 0.78rem; color: #38bdf8; margin-top: 2px;">{st.session_state.get('role', 'Administrator')}</div>
+    <div style="font-size: 0.75rem; color: #a3a9b8; margin-top: 6px; word-break: break-all;">Alerts: {user_email_disp}</div>
 </div>
 """, unsafe_allow_html=True)
 
-if st.sidebar.button("🚪 Log Out", key="btn_operator_logout", use_container_width=True):
+if st.sidebar.button("Log out", key="btn_operator_logout", use_container_width=True):
     # Stop any background camera streaming before session clear
     if "multi_cam" in st.session_state and st.session_state.multi_cam is not None:
         try:
@@ -1395,30 +1414,30 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                             else:
                                 status_box.success(f"🟢 Normal - Score: {combined_score:.1f} | Speed: {avg_speed:.1f} px/f | Heading: {dominant_dir} | {cam_text}")
                         
-                        risk_colors = {"Low": "#00ff88", "LOW": "#00ff88", "Medium": "#ffaa00", "MEDIUM": "#ffaa00", "High": "#ff0000", "HIGH": "#ff0000"}
-                        color = risk_colors.get(risk_level_str, "#666")
+                        risk_colors = {"Low": "#4cc38a", "LOW": "#4cc38a", "Medium": "#f59e0b", "MEDIUM": "#f59e0b", "High": "#e5484d", "HIGH": "#e5484d", "Critical": "#dc2626", "CRITICAL": "#dc2626"}
+                        color = risk_colors.get(risk_level_str, "#7a8296")
                         
-                        card_title = "EXPERIMENTAL HEAD RISK PROXY" if detection_mode == "🗣️ Head Mode — Experimental" else risk_level_str.upper()
+                        card_title = "Experimental head risk proxy" if detection_mode == "🗣️ Head Mode — Experimental" else f"{risk_level_str.capitalize()} risk"
                         risk_placeholder.markdown(f"""
-                        <div style="background:#1a1a2e; padding:15px; border-radius:10px; 
-                                    text-align:center; border:3px solid {color}; margin-bottom:10px;">
-                            <h3 style="color:{color}; margin:0;">{card_title}</h3>
-                            <h1 style="color:{color}; margin:5px 0;">{combined_score:.1f}</h1>
-                            <p style="margin:0; font-size:0.9em;">Speed: {avg_speed:.1f} px/f ({dominant_dir})</p>
+                        <div style="background:#11141c; padding:16px 18px; border-radius:12px;
+                                    border:1px solid rgba(238,240,245,0.08); border-left:3px solid {color}; margin-bottom:12px;">
+                            <div style="font-size:0.75rem; color:#7a8296; margin-bottom:4px;">{card_title}</div>
+                            <div class="cp-mono" style="color:{color}; font-size:2.1rem; font-weight:500; line-height:1.05; margin:4px 0;">{combined_score:.1f}</div>
+                            <div class="cp-mono" style="margin:6px 0 0 0; font-size:0.8rem; color:#a3a9b8;">Speed {avg_speed:.1f} px/f · {dominant_dir}</div>
                         </div>
                         """, unsafe_allow_html=True)
                         
                         if detection_mode == "🗣️ Head Mode — Experimental":
-                            person_metric.metric("🗣️ Visible Heads", visible_heads, delta=f"{active_head_tracks} active tracks", delta_color="off")
-                            density_metric.metric("📊 Max Head Density", f"{max_density} heads/cell")
+                            person_metric.metric("Visible heads", visible_heads, delta=f"{active_head_tracks} active tracks", delta_color="off")
+                            density_metric.metric("Max head density", f"{max_density} heads/cell")
                         else:
-                            person_metric.metric("👥 Tracked Persons", person_count)
-                            density_metric.metric("📊 Max Density", f"{max_density} p/cell")
+                            person_metric.metric("Tracked persons", person_count)
+                            density_metric.metric("Max density", f"{max_density} p/cell")
                             
-                        speed_metric.metric("🏃 Avg Speed", f"{avg_speed:.1f} px/f ({dominant_dir})")
-                        anomaly_metric.metric("⚠️ Anomaly Score", f"{anomaly_score:.2f}")
-                        quality_bar.progress(min(max(0.0, data_quality_score), 1.0), text=f"Data Quality ({data_quality_score*100:.0f}%)")
-                        fps_metric.metric("⚡ Pipeline FPS", f"{avg_fps:.1f}", delta=f"Src: {source_fps:.0f} FPS", delta_color="off")
+                        speed_metric.metric("Avg speed", f"{avg_speed:.1f} px/f ({dominant_dir})")
+                        anomaly_metric.metric("Anomaly score", f"{anomaly_score:.2f}")
+                        quality_bar.progress(min(max(0.0, data_quality_score), 1.0), text=f"Data quality ({data_quality_score*100:.0f}%)")
+                        fps_metric.metric("Pipeline FPS", f"{avg_fps:.1f}", delta=f"Src {source_fps:.0f} FPS", delta_color="off")
                     
                     # OPTIMIZATION: Ultra-lightweight native line charts (Zero Plotly Canvas freeze)
                     if frame_count % 15 == 0 and len(st.session_state.time_history) > 1:
