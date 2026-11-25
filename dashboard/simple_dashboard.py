@@ -112,8 +112,12 @@ def init_firebase():
         return True
     except ValueError:
         try:
-            cred_path = Path(__file__).parent.parent / 'firebase-credentials.json'
-            if not cred_path.exists():
+            cred_candidates = [
+                Path(__file__).resolve().parent / 'firebase-credentials.json',
+                Path(__file__).resolve().parent.parent / 'firebase-credentials.json',
+            ]
+            cred_path = next((p for p in cred_candidates if p.exists()), None)
+            if cred_path is None:
                 return False
             cred = credentials.Certificate(str(cred_path))
             firebase_admin.initialize_app(cred, {
@@ -134,10 +138,10 @@ st.set_page_config(
 
 try:
     from dashboard.design_system import get_design_system_css
-    from dashboard.landing_page import render_saas_landing_page, render_landing_footer
+    from dashboard.landing_page import render_saas_landing_page, render_landing_footer, _brand_logo_html
 except ImportError:
     from design_system import get_design_system_css
-    from landing_page import render_saas_landing_page, render_landing_footer
+    from landing_page import render_saas_landing_page, render_landing_footer, _brand_logo_html
 
 st.markdown(get_design_system_css(), unsafe_allow_html=True)
 
@@ -319,9 +323,13 @@ st.title("CrowdPatrol - Autonomous Crowd Monitoring Dashboard")
 
 _live_state_cls = "cp-status-dot--live" if st.session_state.get("is_monitoring", False) else "cp-status-dot--standby"
 _live_state_txt = "LIVE" if st.session_state.get("is_monitoring", False) else "STANDBY"
+_dash_logo_html = _brand_logo_html(38)
 st.markdown(f"""
-<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid rgba(238,240,245,0.08); font-size:0.82rem; color:#a3a9b8;">
-    <div><span class="cp-status-dot {_live_state_cls}"></span><span class="cp-mono">{_live_state_txt}</span> · Real-time crowd density, motion-anomaly, and multi-camera monitoring</div>
+<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid rgba(238,240,245,0.08); font-size:0.82rem; color:#a3a9b8;">
+    <div style="display:flex; align-items:center; gap:10px;">
+        {_dash_logo_html}
+        <div><span class="cp-status-dot {_live_state_cls}"></span><span class="cp-mono">{_live_state_txt}</span> · Real-time crowd density, motion-anomaly, and multi-camera monitoring</div>
+    </div>
     <div class="cp-mono">Operator: {st.session_state.get('username', 'Operator')}</div>
 </div>
 """, unsafe_allow_html=True)
@@ -341,6 +349,16 @@ if 'is_monitoring' not in st.session_state:
     st.session_state.is_monitoring = False
 
 # ========== SIDEBAR MODE & CONFIGURATION ==========
+_sidebar_logo_html = _brand_logo_html(36)
+st.sidebar.markdown(f"""
+<div style="display:flex; align-items:center; gap:10px; padding:4px 2px 12px 2px; margin-bottom:10px; border-bottom:1px solid rgba(238,240,245,0.08);">
+    {_sidebar_logo_html}
+    <div>
+        <div style="font-size:1rem; font-weight:600; color:#eef0f5; line-height:1.1;">CrowdPatrol</div>
+        <div class="cp-mono" style="font-size:0.65rem; color:#38bdf8; letter-spacing:0.06em;">COMMAND CENTER</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 user_email_disp = st.session_state.get('user_email', 'shreyaskeyboardtutorials@gmail.com')
 st.sidebar.markdown(f"""
 <div style="background: #11141c; border: 1px solid rgba(238, 240, 245, 0.08); border-radius: 10px; padding: 12px; margin-bottom: 12px;">
@@ -527,7 +545,6 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     
     tiled_mode = False
     if detection_mode == "🗣️ Head Mode — Experimental":
-        st.sidebar.warning("⚠️ EXPERIMENTAL MODE ACTIVE\nUsing V4 Head Detector (crowdpatrol_yolov8n_head_v4.pt).\nNot for production safety monitoring.")
         head_strategy = st.sidebar.selectbox(
             "Inference Strategy:",
             ["Full-Frame (640x640)", "2x2 Spatial Tiling"]
@@ -864,7 +881,6 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     
     tiled_mode = False
     if detection_mode == "🗣️ Head Mode — Experimental":
-        st.sidebar.warning("⚠️ EXPERIMENTAL MODE ACTIVE\nUsing V4 Head Detector across all streams.\nNot for production safety monitoring.")
         head_strategy = st.sidebar.selectbox(
             "Inference Strategy:",
             ["Full-Frame (640x640)", "2x2 Spatial Tiling"]
@@ -1051,9 +1067,6 @@ def read_recent_alerts(limit=5):
 # ========== MODE 1: INTERACTIVE WEB PIPELINE EXECUTION ==========
 if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     if st.session_state.is_monitoring:
-        if detection_mode == "🗣️ Head Mode — Experimental":
-            st.warning("⚠️ EXPERIMENTAL MODE — HEAD DETECTION ACTIVE. Using V4 Head Detector (crowdpatrol_yolov8n_head_v4.pt). Not for production safety monitoring.")
-            
         status_box.info(f"⏳ Initializing CrowdPatrol Core Modules... Source: `{video_source}` | Mode: `{detection_mode}`")
         
         cap = VideoProcessor.get_video_source(video_source)
@@ -1509,8 +1522,6 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
         alert_center_ph = st.empty()
         
         mode_key = "HEAD" if detection_mode == "🗣️ Head Mode — Experimental" else "PERSON"
-        if mode_key == "HEAD":
-            st.warning("⚠️ EXPERIMENTAL MODE — HEAD DETECTION ACTIVE across multi-camera streams.")
             
         reinit_needed = (
             "multi_cam" not in st.session_state

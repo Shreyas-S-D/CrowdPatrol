@@ -55,7 +55,8 @@ class FirebaseAlertManager:
         except ValueError:
             if not os.path.exists(credentials_path):
                 alt_paths = [
-                    Path(__file__).parent.parent / "firebase-credentials.json",
+                    Path(__file__).resolve().parent.parent / "firebase-credentials.json",
+                    Path(__file__).resolve().parent.parent / "dashboard" / "firebase-credentials.json",
                     Path.home() / ".firebase" / "credentials.json"
                 ]
                 for path in alt_paths:

@@ -43,15 +43,16 @@ def _brand_logo_html(size: int = 34) -> str:
 def get_landing_page_css() -> str:
     c = COLOR_TOKENS
     t = TYPOGRAPHY_TOKENS
-    font_disp = t.get("font_display", t["font_sans"])
+    font_disp = "'Sora', 'Space Grotesk', sans-serif"
+    font_body = "'DM Sans', 'IBM Plex Sans', sans-serif"
     return _clean_html(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 .stApp {{
     background-color: {c['bg_main']} !important;
     color: {c['text_primary']} !important;
-    font-family: {t['font_sans']} !important;
+    font-family: {font_body} !important;
 }}
 .block-container {{
     padding-top: 112px !important;
@@ -332,8 +333,8 @@ details.cp-story-cloud[open] summary.cp-cloud-trigger {{
 }}
 .cp-step:last-child {{ margin-bottom: 0; }}
 .cp-step-num {{ font-family: {t['font_mono']}; font-size: 0.74rem; color: {c['accent']}; margin-bottom: 4px; }}
-.cp-step-h {{ font-size: 0.96rem; font-weight: 600; color: {c['text_primary']}; margin-bottom: 4px; }}
-.cp-step-p {{ font-size: 0.85rem; line-height: 1.5; color: {c['text_secondary']}; margin: 0; }}
+.cp-step-h {{ font-family: {font_disp}; font-size: 0.98rem; font-weight: 600; color: {c['text_primary']}; margin-bottom: 4px; }}
+.cp-step-p {{ font-family: {font_body}; font-size: 0.86rem; line-height: 1.55; color: {c['text_secondary']}; margin: 0; }}
 
 /* 6-Card Feature Grid */
 .cp-grid-6 {{
@@ -350,8 +351,8 @@ details.cp-story-cloud[open] summary.cp-cloud-trigger {{
     display: inline-flex; align-items: center; justify-content: center;
     margin-bottom: 12px; border: 1px solid {c['hairline']};
 }}
-.cp-feat-h {{ font-size: 0.98rem; font-weight: 600; color: {c['text_primary']}; margin: 0 0 6px 0; }}
-.cp-feat-p {{ font-size: 0.85rem; line-height: 1.55; color: {c['text_secondary']}; margin: 0; }}
+.cp-feat-h {{ font-family: {font_disp}; font-size: 0.98rem; font-weight: 600; color: {c['text_primary']}; margin: 0 0 6px 0; }}
+.cp-feat-p {{ font-family: {font_body}; font-size: 0.86rem; line-height: 1.55; color: {c['text_secondary']}; margin: 0; }}
 
 /* Benchmarks */
 .cp-bench-grid {{
