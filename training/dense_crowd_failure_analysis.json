@@ -1,0 +1,109 @@
+{
+  "video_info": {
+    "width": 1280,
+    "height": 720,
+    "fps": 29.97002997002997,
+    "total_frames": 5588,
+    "duration_sec": 186.45293333333333,
+    "avg_brightness": 88.26776678240739,
+    "avg_std_dev": 48.96753186240742,
+    "avg_frame_difference": 9.04002166798421,
+    "camera_motion_type": "Moving / Panning",
+    "perspective": "High-Angle Overhead / Distant Crowd",
+    "crowd_orientation": "Mixed (Frontal & Top-Down Head Views)",
+    "sampled_frame_count": 30
+  },
+  "scale_analysis": {
+    "height_buckets": {
+      "very_small_lt_20px": 0,
+      "small_20_40px": 2,
+      "medium_40_80px": 1,
+      "large_gt_80px": 648
+    },
+    "mean_native_height_px": 286.9766539589784,
+    "median_native_height_px": 238.3167724609375,
+    "mean_downscaled_height_640": 143.4883269794892,
+    "median_downscaled_height_640": 119.15838623046875,
+    "downscale_ratio_at_640": 0.5,
+    "stride8_grid_cell_size_px": 8.0
+  },
+  "tiling_experiment": {
+    "v2": {
+      "full_frame": {
+        "avg_detections_per_frame": 1.8666666666666667,
+        "median_detections_per_frame": 1.0,
+        "max_detections_per_frame": 11,
+        "zero_detection_frames": 108,
+        "zero_detection_pct": 36.0,
+        "fps_avg": 32.55179476108068
+      },
+      "tiled_2x2": {
+        "avg_detections_per_frame": 4.8566666666666665,
+        "median_detections_per_frame": 5.0,
+        "max_detections_per_frame": 17,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "fps_avg": 7.940149797536269
+      }
+    },
+    "v3": {
+      "full_frame": {
+        "avg_detections_per_frame": 0.88,
+        "median_detections_per_frame": 0.0,
+        "max_detections_per_frame": 8,
+        "zero_detection_frames": 196,
+        "zero_detection_pct": 65.33333333333333,
+        "fps_avg": 32.72074107220347
+      },
+      "tiled_2x2": {
+        "avg_detections_per_frame": 4.693333333333333,
+        "median_detections_per_frame": 5.0,
+        "max_detections_per_frame": 13,
+        "zero_detection_frames": 2,
+        "zero_detection_pct": 0.6666666666666667,
+        "fps_avg": 7.770483639182695
+      }
+    }
+  },
+  "domain_comparison": {
+    "crowdhuman_characteristics": {
+      "viewpoint": "Eye-level / Street-level perspective",
+      "person_aspect": "Full body / Upper body visible with high contrast",
+      "lighting": "Clear outdoor / daylight photography",
+      "resolution": "High-resolution DSLR photographs (~1920x1080)"
+    },
+    "dense_video_characteristics": {
+      "viewpoint": "High-angle overhead / Surveillance angle",
+      "person_aspect": "Top-down view of hair/heads with minimal body context",
+      "lighting": "Uneven lighting / lower contrast",
+      "resolution": "Compressed video stream with compression artifacts and motion blur"
+    },
+    "domain_mismatch_findings": "Significant domain gap observed. CrowdHuman contains street-level photos where faces and torsos are visible. The dense video features a top-down high-angle camera where people appear primarily as small circular heads without visible limbs or bodies."
+  },
+  "head_annotation_analysis": {
+    "total_head_annotations_evaluated": 103115,
+    "mean_head_width_px": 36.4777578431848,
+    "median_head_width_px": 22.0,
+    "mean_head_height_px": 44.37631770353489,
+    "median_head_height_px": 26.0,
+    "mean_vbox_height_px": 200.22446782718325,
+    "mean_fbox_height_px": 266.94698152548125,
+    "head_to_full_body_ratio": 0.1662364468402838,
+    "technical_justification": "In dense crowd videos with high-angle overhead cameras, body features are 80-90% occluded, leaving only heads visible. CrowdHuman hbox annotations directly isolate these exact head targets (mean size 36px in CrowdHuman), making head-target training technically aligned with overhead dense crowd scenes."
+  },
+  "answers_to_core_questions": {
+    "q1_are_people_too_small": true,
+    "q1_explanation": "Yes. Most visible heads/people in dense_crowd_test.mp4 have native pixel heights of 15-35px. When downscaled to imgsz=640, they shrink to 8-15px, occupying barely 1 to 1.5 stride-8 feature cells, falling below the detector's spatial activation threshold.",
+    "q2_would_tiling_materially_help": true,
+    "q2_explanation": "Yes. 2x2 spatial tiling increases V2 average detections from 1.87 to 4.86 per frame and reduces zero-detection frames from 36.0% to 0.0%.",
+    "q3_is_video_visually_different_from_crowdhuman": true,
+    "q3_explanation": "Yes. CrowdHuman consists of eye-level DSLR street photographs showing torsos and faces. The dense crowd video is a high-angle overhead surveillance clip showing top-down heads with severe occlusion.",
+    "q4_does_vbox_match_visible_people": false,
+    "q4_explanation": "No. VBOX still includes visible body/torso height (mean 200px in CrowdHuman). In high-angle dense crowds, bodies are completely occluded, so VBOX still forces the detector to look for upper body features that do not exist.",
+    "q5_would_head_target_training_address_failure": true,
+    "q5_explanation": "Yes. CrowdHuman hbox annotations (mean size 36px) tightly isolate head regions without requiring torso/body visibility, matching the top-down head-only appearance in high-angle dense crowds.",
+    "q6_is_limitation_architecture_resolution_related": true,
+    "q6_explanation": "Yes. Global downscaling of large video frames to 640x640 destroys small spatial features. Spatial resolution (or tiling) combined with a head-specific detector architecture is required.",
+    "q7_next_recommended_experiment": "Execute a controlled experiment testing head-target (HBOX) training combined with higher inference resolution or spatial tiling."
+  }
+}

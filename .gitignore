@@ -1,62 +1,96 @@
-# Python cache
+# =========================
+# Python
+# =========================
 __pycache__/
 *.py[cod]
 *.pyo
 
+# =========================
 # Virtual environments
+# =========================
 venv/
 env/
 crowdpatrol_env/
 
+# =========================
 # Logs
+# =========================
 logs/
 *.log
 
+# =========================
 # Environment variables
+# =========================
 .env
+.env.*
 
+# =========================
 # VS Code
+# =========================
 .vscode/
 
+# =========================
 # Jupyter
+# =========================
 .ipynb_checkpoints/
 
+# =========================
 # OS files
+# =========================
 Thumbs.db
 .DS_Store
 
+# =========================
 # Build files
+# =========================
 build/
 dist/
 *.egg-info/
 
-# ML models
+# =========================
+# ML model weights
+# =========================
 models/*.pt
 models/*.pth
 models/*.onnx
+*.pt
+*.pth
+*.onnx
 
+# =========================
 # Generated output
+# =========================
 output/
 
-# Environments
-venv/
-env/
-crowdpatrol_env/
-
-# Secrets
-.env
+# =========================
+# Secrets / credentials
+# =========================
 *.pem
 *.key
 serviceAccountKey.json
 google-services.json
 firebase-adminsdk*.json
-
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Logs/output
-logs/
-output/firebase-credentials.json
 firebase-credentials.json
-*.json
+output/firebase-credentials.json
+
+# =========================
+# CrowdPatrol development data
+# =========================
+data/
+runs/
+training/runs/
+
+# =========================
+# Generated training visualizations
+# =========================
+training/visualizations/
+
+# =========================
+# Scratch / audit scripts
+# =========================
+scratch/
+
+# =========================
+# Temporary files
+# =========================
+.freebuff/

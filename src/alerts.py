@@ -6,9 +6,11 @@ Replaces Twilio SMS + SMTP email with Firebase Realtime DB + FCM.
 import firebase_admin
 from firebase_admin import credentials, db, firestore, messaging
 from datetime import datetime, timedelta
+import time
 import json
 import os
 from pathlib import Path
+from typing import Optional, List, Dict, Any
 
 
 class FirebaseAlertManager:
@@ -53,7 +55,8 @@ class FirebaseAlertManager:
         except ValueError:
             if not os.path.exists(credentials_path):
                 alt_paths = [
-                    Path(__file__).parent.parent / "firebase-credentials.json",
+                    Path(__file__).resolve().parent.parent / "firebase-credentials.json",
+                    Path(__file__).resolve().parent.parent / "dashboard" / "firebase-credentials.json",
                     Path.home() / ".firebase" / "credentials.json"
                 ]
                 for path in alt_paths:
@@ -103,7 +106,7 @@ class FirebaseAlertManager:
             return True
         return (datetime.now() - self.last_notification_time).total_seconds() > self.notification_cooldown
     
-    def store_alert(self, risk_level, density, anomaly_score, person_count, combined_score):
+    def store_alert(self, risk_level, density, anomaly_score, person_count, combined_score, growth_rate=0.0, data_quality_score=1.0, primary_risk_zone="A1", primary_zone_density=0):
         if not self.can_send_alert():
             return None
         
@@ -116,9 +119,13 @@ class FirebaseAlertManager:
             "timestamp_unix": int(timestamp.timestamp()),
             "risk_level": str(risk_level),
             "density": int(density),                          # ← int()
+            "primary_risk_zone": str(primary_risk_zone),
+            "primary_zone_density": int(primary_zone_density),
             "anomaly_score": float(round(anomaly_score, 3)),  # ← float()
             "person_count": int(person_count),                 # ← int()
             "combined_score": float(round(combined_score, 1)), # ← float()
+            "growth_rate": float(round(growth_rate, 2)),
+            "data_quality_score": float(round(data_quality_score, 2)),
             "acknowledged": False,
             "acknowledged_by": None,
             "acknowledged_at": None
@@ -133,6 +140,8 @@ class FirebaseAlertManager:
                 "risk_level": str(risk_level),
                 "person_count": int(person_count),
                 "max_density": int(density),
+                "primary_risk_zone": str(primary_risk_zone),
+                "primary_zone_density": int(primary_zone_density),
                 "last_updated": timestamp.isoformat(),
                 "last_alert_id": new_alert_ref.key
             })
@@ -144,6 +153,109 @@ class FirebaseAlertManager:
         except Exception as e:
             print(f"[!] Failed to store alert: {e}")
             return None
+
+    def store_camera_alert(self, alert_data: dict):
+        """
+        Pushes namespaced camera alert payload to Firebase RTDB at alerts/<camera_id>/<alert_id>
+        and flat reference at alerts/<alert_id>, and updates active alert reference at cameras/<camera_id>/current_alert.
+        """
+        try:
+            cam_id = alert_data.get("camera_id", "UNKNOWN")
+            alert_id = alert_data.get("alert_id", f"alt_{int(time.time())}")
+            
+            # Store at alerts/<camera_id>/<alert_id>
+            alert_ref = self.rtdb.reference(f'alerts/{cam_id}/{alert_id}')
+            alert_ref.set(alert_data)
+
+            # Store flat reference at alerts/<alert_id>
+            self.rtdb.reference(f'alerts/{alert_id}').set(alert_data)
+            
+            # Update active camera alert snapshot
+            cam_alert_ref = self.rtdb.reference(f'cameras/{cam_id}/current_alert')
+            cam_alert_ref.update({
+                "alert_id": alert_id,
+                "risk_level": alert_data.get("risk_level", alert_data.get("severity", "LOW")),
+                "severity": alert_data.get("severity", alert_data.get("risk_level", "LOW")),
+                "category": alert_data.get("category", "CROWD_RISK"),
+                "risk_score": alert_data.get("risk_score", 0.0),
+                "crowd_density": alert_data.get("crowd_density", alert_data.get("density", 0)),
+                "person_count": alert_data.get("person_count", 0),
+                "primary_risk_zone": alert_data.get("primary_risk_zone", "A1"),
+                "primary_zone_density": alert_data.get("primary_zone_density", 0),
+                "reason": alert_data.get("reason", alert_data.get("trigger_reason", "")),
+                "status": alert_data.get("status", "ACTIVE"),
+                "timestamp": alert_data.get("timestamp", datetime.now().isoformat())
+            })
+            print(f"[✓] Camera alert stored in Firebase: {cam_id} - {alert_data.get('risk_level')} ({alert_id})")
+            return alert_id
+        except Exception as e:
+            if not getattr(self, "_rtdb_cam_alert_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB camera alert write failure ({e}). Local execution continues.")
+                self._rtdb_cam_alert_warning_logged = True
+            return None
+
+    def update_alert_status(
+        self,
+        alert_id: str,
+        camera_id: str = "UNKNOWN",
+        status: str = "ACKNOWLEDGED",
+        acknowledged_by: Optional[str] = None,
+        resolved_by: Optional[str] = None
+    ) -> bool:
+        """
+        Updates alert status and metadata across Firebase RTDB.
+        """
+        try:
+            updates = {
+                "status": status,
+                "last_updated": datetime.now().isoformat()
+            }
+            if status == "ACKNOWLEDGED":
+                updates["acknowledged"] = True
+                updates["acknowledged_at"] = datetime.now().isoformat()
+                if acknowledged_by:
+                    updates["acknowledged_by"] = acknowledged_by
+            elif status == "RESOLVED":
+                updates["resolved_at"] = datetime.now().isoformat()
+                if resolved_by:
+                    updates["resolved_by"] = resolved_by
+
+            if camera_id and camera_id != "UNKNOWN":
+                self.rtdb.reference(f'cameras/{camera_id}/current_alert').update(updates)
+                self.rtdb.reference(f'alerts/{camera_id}/{alert_id}').update(updates)
+            self.rtdb.reference(f'alerts/{alert_id}').update(updates)
+            print(f"[✓] Alert {alert_id} status updated to {status} in Firebase")
+            return True
+        except Exception as e:
+            if not getattr(self, "_rtdb_status_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB update_alert_status failure ({e}). Local operation continues.")
+                self._rtdb_status_warning_logged = True
+            return False
+
+    def get_alert_history_from_firebase(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Retrieves recent alerts from Firebase Realtime Database.
+        """
+        try:
+            alerts_ref = self.rtdb.reference('alerts')
+            data = alerts_ref.order_by_key().limit_to_last(limit).get()
+            if not data:
+                return []
+            history = []
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    if "alert_id" in v:
+                        history.append({"key": k, **v})
+                    else:
+                        for sub_k, sub_v in v.items():
+                            if isinstance(sub_v, dict) and "alert_id" in sub_v:
+                                history.append({"key": sub_k, **sub_v})
+            return history[::-1]
+        except Exception as e:
+            if not getattr(self, "_rtdb_get_history_warning_logged", False):
+                print(f"[!] Warning: Failed to fetch alert history from Firebase ({e}).")
+                self._rtdb_get_history_warning_logged = True
+            return []
     
     def store_metrics_batch(self, metrics_history):
         """
@@ -304,36 +416,72 @@ class FirebaseAlertManager:
             return []
     
     def update_dashboard_data(self, metrics):
+        """
+        Pushes normalized telemetry snapshot (16 primary fields + 3 aliases = 19 keys) to Firebase RTDB.
+        Handles runtime connection failures cleanly without crashing main loop or spamming logs.
+        """
         try:
             dashboard_ref = self.rtdb.reference('dashboard')
             
-            # Force Python native types (not NumPy)
-            import numpy as np
-            
-            def clean_value(v):
-                """Convert NumPy types to Python native types"""
-                if isinstance(v, (np.integer,)):
-                    return int(v)
-                elif isinstance(v, (np.floating,)):
-                    return float(v)
-                elif isinstance(v, np.ndarray):
-                    return v.tolist()
-                return v
-            
-            dashboard_data = {
-                "person_count": clean_value(metrics.get("person_count", 0)),
-                "max_density": clean_value(metrics.get("density", 0)),
-                "risk_level": str(metrics.get("risk", "Low")),
-                "combined_score": clean_value(metrics.get("combined_score", 0)),
-                "anomaly_score": clean_value(metrics.get("anomaly", 0)),
-                "last_frame_time": datetime.now().isoformat(),
-                "fps": clean_value(metrics.get("fps", 0))
-            }
+            # Use dashboard_utils normalization helper if available, or inline safe clean logic
+            try:
+                from dashboard.dashboard_utils import normalize_telemetry_payload
+                dashboard_data = normalize_telemetry_payload(metrics)
+            except ImportError:
+                import numpy as np
+                def clean_val(v, default=0.0):
+                    if v is None: return default
+                    if isinstance(v, (np.integer, int)): return int(v)
+                    if isinstance(v, (np.floating, float)): return float(v)
+                    if isinstance(v, bool): return bool(v)
+                    return str(v)
+
+                max_density_val = clean_val(metrics.get("max_density", metrics.get("density", 0)), 0)
+                risk_level_val = str(metrics.get("risk_level", metrics.get("risk", "Low")))
+                anomaly_val = clean_val(metrics.get("anomaly_score", metrics.get("anomaly", 0.0)), 0.0)
+
+                dashboard_data = {
+                    "person_count": clean_val(metrics.get("person_count", 0), 0),
+                    "max_density": max_density_val,
+                    "risk_level": risk_level_val,
+                    "combined_score": clean_val(metrics.get("combined_score", 0.0), 0.0),
+                    "raw_score": clean_val(metrics.get("raw_score", 0.0), 0.0),
+                    "smoothed_score": clean_val(metrics.get("smoothed_score", 0.0), 0.0),
+                    "growth_rate": clean_val(metrics.get("growth_rate", 0.0), 0.0),
+                    "data_quality_score": clean_val(metrics.get("data_quality_score", 1.0), 1.0),
+                    "avg_speed": clean_val(metrics.get("avg_speed", 0.0), 0.0),
+                    "max_speed": clean_val(metrics.get("max_speed", 0.0), 0.0),
+                    "dominant_direction": str(metrics.get("dominant_direction", "STATIONARY")),
+                    "camera_motion_detected": bool(metrics.get("camera_motion_detected", False)),
+                    "sudden_movement_count": clean_val(metrics.get("sudden_movement_count", 0), 0),
+                    "anomaly_score": anomaly_val,
+                    "fps": clean_val(metrics.get("fps", 0.0), 0.0),
+                    "last_frame_time": str(metrics.get("last_frame_time", datetime.now().isoformat())),
+                    # 3 Backward-Compatibility Aliases
+                    "density": max_density_val,
+                    "risk": risk_level_val,
+                    "anomaly": anomaly_val
+                }
             
             dashboard_ref.update(dashboard_data)
             
         except Exception as e:
-            print(f"[!] Failed to update dashboard: {e}")
+            # Throttled error warning (log only if not previously warned recently)
+            if not getattr(self, "_rtdb_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB write failure ({e}). Local execution continues.")
+                self._rtdb_warning_logged = True
+
+    def update_camera_telemetry(self, camera_id, metrics):
+        """
+        Pushes camera-namespaced telemetry snapshot (cameras/<camera_id>) to Firebase RTDB.
+        """
+        try:
+            cam_ref = self.rtdb.reference(f'cameras/{camera_id}')
+            cam_ref.update(metrics)
+        except Exception as e:
+            if not getattr(self, "_rtdb_cam_warning_logged", False):
+                print(f"[!] Warning: Firebase RTDB camera write failure ({e}). Local execution continues.")
+                self._rtdb_cam_warning_logged = True
 
     
     def store_event_log(self, event_type, details):

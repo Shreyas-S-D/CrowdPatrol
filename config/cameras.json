@@ -1,0 +1,36 @@
+{
+  "cameras": [
+    {
+      "id": "CAM-01",
+      "name": "Main Sidewalk / Entrance",
+      "source_type": "video",
+      "source": "data/videos/crowd_sample.mp4",
+      "device_name": null,
+      "enabled": true
+    },
+    {
+      "id": "CAM-02",
+      "name": "Overhead Dense Zone",
+      "source_type": "video",
+      "source": "data/videos/youtube_crowd_test.mp4",
+      "device_name": null,
+      "enabled": true
+    },
+    {
+      "id": "CAM-03",
+      "name": "Street Crossing Plaza",
+      "source_type": "video",
+      "source": "data\\videos\\temp\\upload_CAM-03_Crowds outside stadium after stampede at India cricket celebrations \uff5c AFP [VgMk90Ue7hY].webm",
+      "device_name": null,
+      "enabled": true
+    },
+    {
+      "id": "CAM-04",
+      "name": "Perimeter Gate",
+      "source_type": "video",
+      "source": "data/videos/temp/upload_CAM-04_temple 4.mp4",
+      "device_name": null,
+      "enabled": true
+    }
+  ]
+}

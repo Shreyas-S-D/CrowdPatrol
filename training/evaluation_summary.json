@@ -1,0 +1,49 @@
+{
+  "baseline": {
+    "model_name": "Pretrained YOLOv8n (yolov8n.pt)",
+    "eval": {
+      "model_path": "yolov8n.pt",
+      "precision": 0.5908,
+      "recall": 0.4037,
+      "map50": 0.4115,
+      "map50_95": 0.1735,
+      "inference_ms": 31.86,
+      "detector_fps": 31.4
+    },
+    "pipeline": {
+      "model_path": "yolov8n.pt",
+      "frames_processed": 150,
+      "full_pipeline_fps": 8.5,
+      "avg_persons_tracked": 20.9,
+      "avg_max_density": 7.4
+    }
+  },
+  "finetuned": {
+    "model_name": "Fine-Tuned CrowdPatrol YOLOv8n (crowdpatrol_yolov8n_finetuned_v2.pt)",
+    "eval": {
+      "model_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_finetuned_v2.pt",
+      "precision": 0.6803,
+      "recall": 0.4695,
+      "map50": 0.5421,
+      "map50_95": 0.2634,
+      "inference_ms": 17.72,
+      "detector_fps": 56.4
+    },
+    "pipeline": {
+      "model_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_finetuned_v2.pt",
+      "frames_processed": 150,
+      "full_pipeline_fps": 9.8,
+      "avg_persons_tracked": 17.6,
+      "avg_max_density": 6.4
+    }
+  },
+  "comparison": {
+    "precision_diff": 0.0895,
+    "recall_diff": 0.0658,
+    "map50_diff": 0.1306,
+    "map50_95_diff": 0.0899,
+    "full_pipeline_fps_diff": 1.3,
+    "recommended_model": "Fine-Tuned Model (crowdpatrol_yolov8n_finetuned_v2.pt)",
+    "recommendation_reason": "Fine-tuned model improved mAP@50 (+0.1306) and Recall (+0.0658) while maintaining smooth execution (9.8 FPS)."
+  }
+}

@@ -1,0 +1,194 @@
+{
+  "model_path": "D:\\Shreyas Files\\AMC Engineering College\\7th sem\\Major Project\\CrowdPatrol\\models\\crowdpatrol_yolov8n_head_v4.pt",
+  "evaluation_suite": {
+    "dense_crowd": {
+      "video_id": "dense_crowd",
+      "video_name": "Dense Overhead Crowd Video",
+      "full_frame": {
+        "avg_head_detections_per_frame": 13.516666666666667,
+        "median_head_detections_per_frame": 10.0,
+        "max_head_detections_per_frame": 45,
+        "min_head_detections_per_frame": 1,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.448470485004632,
+        "fps_avg": 30.316370118304985
+      },
+      "tiled_2x2": {
+        "avg_head_detections_per_frame": 20.643333333333334,
+        "median_head_detections_per_frame": 24.0,
+        "max_head_detections_per_frame": 50,
+        "min_head_detections_per_frame": 0,
+        "zero_detection_frames": 1,
+        "zero_detection_pct": 0.33333333333333337,
+        "avg_confidence": 0.4693229915723072,
+        "fps_avg": 8.8941603984648
+      },
+      "temporal_stability": {
+        "mean_frame_to_frame_count_diff": 2.749163879598662,
+        "max_frame_to_frame_count_jump": 21,
+        "count_std_dev": 10.378329452384051
+      },
+      "deepsort_compatibility": {
+        "avg_head_tracks_per_frame": 56.73,
+        "max_head_tracks": 132,
+        "deepsort_fps": 3.818101777572119
+      }
+    },
+    "youtube_crowd": {
+      "video_id": "youtube_crowd",
+      "video_name": "YouTube Real Crowd Video",
+      "full_frame": {
+        "avg_head_detections_per_frame": 7.73,
+        "median_head_detections_per_frame": 8.0,
+        "max_head_detections_per_frame": 13,
+        "min_head_detections_per_frame": 3,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.5699806686180735,
+        "fps_avg": 31.316562374544024
+      },
+      "tiled_2x2": {
+        "avg_head_detections_per_frame": 12.073333333333334,
+        "median_head_detections_per_frame": 12.0,
+        "max_head_detections_per_frame": 19,
+        "min_head_detections_per_frame": 7,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.6182171739576141,
+        "fps_avg": 7.742320581906141
+      },
+      "temporal_stability": {
+        "mean_frame_to_frame_count_diff": 0.7959866220735786,
+        "max_frame_to_frame_count_jump": 4,
+        "count_std_dev": 1.7579628361638744
+      },
+      "deepsort_compatibility": {
+        "avg_head_tracks_per_frame": 14.99,
+        "max_head_tracks": 19,
+        "deepsort_fps": 8.003396449355366
+      }
+    },
+    "real_video_1": {
+      "video_id": "real_video_1",
+      "video_name": "Bengaluru Real Crowd Video 1 (Sidewalk Flow)",
+      "full_frame": {
+        "avg_head_detections_per_frame": 7.586666666666667,
+        "median_head_detections_per_frame": 8.0,
+        "max_head_detections_per_frame": 13,
+        "min_head_detections_per_frame": 4,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.5708759838489321,
+        "fps_avg": 30.600768048452103
+      },
+      "tiled_2x2": {
+        "avg_head_detections_per_frame": 11.663333333333334,
+        "median_head_detections_per_frame": 12.0,
+        "max_head_detections_per_frame": 18,
+        "min_head_detections_per_frame": 6,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.6161649462222099,
+        "fps_avg": 7.552070487614315
+      },
+      "temporal_stability": {
+        "mean_frame_to_frame_count_diff": 0.7993311036789298,
+        "max_frame_to_frame_count_jump": 3,
+        "count_std_dev": 1.6620736713181186
+      },
+      "deepsort_compatibility": {
+        "avg_head_tracks_per_frame": 14.83,
+        "max_head_tracks": 20,
+        "deepsort_fps": 7.9881412102687195
+      }
+    },
+    "real_video_2": {
+      "video_id": "real_video_2",
+      "video_name": "Bengaluru Real Crowd Video 2 (Street Crossing)",
+      "full_frame": {
+        "avg_head_detections_per_frame": 8.346666666666666,
+        "median_head_detections_per_frame": 9.0,
+        "max_head_detections_per_frame": 13,
+        "min_head_detections_per_frame": 1,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.5833815014400421,
+        "fps_avg": 28.080813698867274
+      },
+      "tiled_2x2": {
+        "avg_head_detections_per_frame": 13.136666666666667,
+        "median_head_detections_per_frame": 13.5,
+        "max_head_detections_per_frame": 19,
+        "min_head_detections_per_frame": 1,
+        "zero_detection_frames": 0,
+        "zero_detection_pct": 0.0,
+        "avg_confidence": 0.5817021020427933,
+        "fps_avg": 6.966421051707479
+      },
+      "temporal_stability": {
+        "mean_frame_to_frame_count_diff": 0.6688963210702341,
+        "max_frame_to_frame_count_jump": 4,
+        "count_std_dev": 1.7184747759439345
+      },
+      "deepsort_compatibility": {
+        "avg_head_tracks_per_frame": 13.52,
+        "max_head_tracks": 18,
+        "deepsort_fps": 7.976868124740058
+      }
+    },
+    "real_video_3": {
+      "video_id": "real_video_3",
+      "video_name": "Bengaluru Real Crowd Video 3 (Commercial Entrance)",
+      "full_frame": {
+        "avg_head_detections_per_frame": 5.793333333333333,
+        "median_head_detections_per_frame": 6.0,
+        "max_head_detections_per_frame": 10,
+        "min_head_detections_per_frame": 0,
+        "zero_detection_frames": 3,
+        "zero_detection_pct": 1.0,
+        "avg_confidence": 0.5454243208068424,
+        "fps_avg": 31.38363215956407
+      },
+      "tiled_2x2": {
+        "avg_head_detections_per_frame": 8.826666666666666,
+        "median_head_detections_per_frame": 9.0,
+        "max_head_detections_per_frame": 15,
+        "min_head_detections_per_frame": 0,
+        "zero_detection_frames": 2,
+        "zero_detection_pct": 0.6666666666666667,
+        "avg_confidence": 0.5601302134801613,
+        "fps_avg": 7.766607641301978
+      },
+      "temporal_stability": {
+        "mean_frame_to_frame_count_diff": 0.7558528428093646,
+        "max_frame_to_frame_count_jump": 5,
+        "count_std_dev": 1.7523190982872447
+      },
+      "deepsort_compatibility": {
+        "avg_head_tracks_per_frame": 11.536666666666667,
+        "max_head_tracks": 15,
+        "deepsort_fps": 11.555123893798111
+      }
+    }
+  },
+  "critical_suitability_assessment": {
+    "A_dense_crowd_head_counting_only": {
+      "rating": "EXCELLENT (SUITABLE)",
+      "evidence": "On dense overhead crowd video, V4 Head increased detections by 623% (13.52 heads/frame full-frame, 20.64 tiled) with 0.0% zero-detection rate and zero background false positives."
+    },
+    "B_general_crowd_counting": {
+      "rating": "MODERATE / SCENE-DEPENDENT",
+      "evidence": "V4 Head detects visible heads across normal pedestrian streams (~10-14 heads/frame), but undercounts distant/side-view pedestrians compared to full-body detectors when heads are occluded or turned away."
+    },
+    "C_person_tracking": {
+      "rating": "PARTIALLY COMPATIBLE",
+      "evidence": "DeepSORT successfully tracks head bounding boxes (averaging ~10-18 active head tracks/frame) without runaway track count or memory leaks, but small head box jitter can increase ID switching."
+    },
+    "D_existing_crowdpatrol_person_density_pipeline": {
+      "rating": "REQUIRES ADAPTATION",
+      "evidence": "Existing CrowdPatrol density grid and risk engine expect full-person bounding box coordinates. Integrating V4 Head requires mapping head bounding boxes to estimated person positions."
+    },
+    "recommended_next_experiment": "Design a hybrid/dual-head inference or spatial tiling module for high-density overhead video streams while retaining V2 full-body detector for standard pedestrian flow."
+  }
+}

@@ -346,6 +346,7 @@ class AnalyticsDashboard:
 
 # Main app
 def main():
+    st.caption("ℹ️ **Academic Prototype Notice**: CrowdPatrol is an experimental prototype for automated crowd density and motion-anomaly monitoring. System output represents relative metric indications for tested benchmark scenarios.")
     st.sidebar.title("🧭 Navigation")
     page = st.sidebar.radio(
         "Go to",

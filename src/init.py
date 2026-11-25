@@ -9,8 +9,9 @@ __author__ = "Team 21 - AMC Engineering College"
 from .detection import PersonDetector
 from .tracking import PersonTracker
 from .density import DensityEstimator
-from .risk_assessment import RiskAssessor, RiskLevel
-from .alerts import AlertManager
+from .risk_assessment import RiskAssessor, RiskLevel, ScoreEMA, HysteresisStateMachine
+from .alerts import FirebaseAlertManager as AlertManager
+from .motion_analysis import CrowdMotionAnalyzer, GridMotionCell
 from .utils import (
     VideoProcessor,
     MetricsLogger,
@@ -28,7 +29,11 @@ __all__ = [
     "DensityEstimator",
     "RiskAssessor",
     "RiskLevel",
+    "ScoreEMA",
+    "HysteresisStateMachine",
     "AlertManager",
+    "CrowdMotionAnalyzer",
+    "GridMotionCell",
     "VideoProcessor",
     "MetricsLogger",
     "FrameAnnotator",

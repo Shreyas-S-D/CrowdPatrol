@@ -1,0 +1,77 @@
+{
+  "frames_audited": 300,
+  "total_raw_boxes": 4055,
+  "raw_detections_per_frame": {
+    "mean": 13.516666666666667,
+    "median": 10.0,
+    "min": 1,
+    "max": 45,
+    "std": 10.378329452384051
+  },
+  "active_deepsort_tracks_per_frame": {
+    "mean": 60.0,
+    "median": 38.0,
+    "max": 146
+  },
+  "visible_matched_tracks_per_frame": {
+    "mean": 13.66,
+    "median": 10.0
+  },
+  "retained_tracks_per_frame": {
+    "mean": 46.34,
+    "median": 31.0
+  },
+  "total_historical_track_ids_created": 640,
+  "bounding_box_dimensions_px": {
+    "width": {
+      "mean": 31.882827686352147,
+      "median": 29.8721923828125,
+      "min": 15.9267578125,
+      "max": 80.369140625
+    },
+    "height": {
+      "mean": 38.33745313801983,
+      "median": 35.505126953125,
+      "min": 20.102569580078125,
+      "max": 135.407958984375
+    },
+    "area": {
+      "mean": 1295.5882828087433,
+      "median": 1059.227532505989,
+      "min": 381.23963713273406,
+      "max": 7759.816138625145
+    },
+    "pct_width_over_80px": 0.02466091245376079,
+    "pct_height_over_80px": 0.345252774352651
+  },
+  "confidence_distribution": {
+    "mean": 0.448470485004632,
+    "median": 0.4287424385547638,
+    "min": 0.3500266373157501,
+    "max": 0.8115939497947693,
+    "percentiles": {
+      "p25": 0.3837786465883255,
+      "p50": 0.4287424385547638,
+      "p75": 0.4958015978336334,
+      "p90": 0.5659847021102905
+    }
+  },
+  "overlapping_detections_analysis": {
+    "total_overlapping_pairs_evaluated": 83,
+    "mean_iou_of_overlapping_pairs": 0.26572027983732344,
+    "pairs_with_iou_ge_30pct": 29,
+    "pairs_with_iou_ge_50pct": 25,
+    "pct_pairs_ge_30pct": 34.93975903614458,
+    "pct_pairs_ge_50pct": 30.120481927710845
+  },
+  "density_and_risk_metrics": {
+    "mean_max_density_cell": 11.456666666666667,
+    "max_max_density_cell": 26,
+    "mean_risk_score": 44.22833333333333,
+    "risk_levels_observed": [
+      "LOW",
+      "MEDIUM"
+    ]
+  },
+  "tracked_heads_metric_verdict": "B) Active DeepSORT tracks including retained/coasted tracks (max_age=30). The dashboard displays len(current_tracks), which retains unmatched tracks for up to 30 frames after losing detection."
+}

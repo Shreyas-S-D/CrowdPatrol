@@ -1,0 +1,2 @@
+timestamp,person_count,max_density,anomaly_score,risk_level,combined_score
+2026-09-15T13:00:00,8,4,0.1,Low,15.5
