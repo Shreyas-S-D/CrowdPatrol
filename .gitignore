@@ -94,3 +94,24 @@ scratch/
 # Temporary files
 # =========================
 .freebuff/
+
+# Local credentials and secrets
+.env
+.env.*
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+backups/
+
+# Python environments
+venv/
+.venv/
+venv_broken_backup/
+
+# Python cache
+__pycache__/
+*.py[cod]
