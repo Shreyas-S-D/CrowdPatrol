@@ -28,7 +28,7 @@
       "id": "CAM-04",
       "name": "Perimeter Gate",
       "source_type": "video",
-      "source": "data\\videos\\temp\\upload_CAM-04_temple 3.mp4",
+      "source": "data/videos/temp/upload_CAM-04_temple 4.mp4",
       "device_name": null,
       "enabled": true
     }

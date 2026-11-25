@@ -58,8 +58,11 @@ import os
 import json
 from pathlib import Path
 
-# Add project root to sys.path
-sys.path.append(str(Path(__file__).parent.parent))
+# Ensure project root is first in sys.path
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT in sys.path:
+    sys.path.remove(_PROJECT_ROOT)
+sys.path.insert(0, _PROJECT_ROOT)
 
 from src.detection import PersonDetector
 from src.tracking import PersonTracker
@@ -86,81 +89,9 @@ from dashboard.dashboard_utils import (
     load_offline_csv_fallback,
     determine_connection_status,
     render_dashboard_alerts,
-    render_dashboard_notifications
+    render_dashboard_notifications,
+    get_alarm_audio_html
 )
-
-try:
-    from dashboard.landing_page import render_landing_page
-except ImportError:
-    from landing_page import render_landing_page
-
-# ========== AUTHENTICATION & MULTI-TENANCY INITIALIZATION ==========
-from src.auth.service import AuthService
-from src.auth.organization_service import (
-    OrganizationService,
-    MembershipService,
-    resolve_tenant_context,
-    is_platform_admin
-)
-from src.auth.invitation_service import InvitationService
-from src.auth.tenant_operational_service import TenantOperationalService
-from src.auth.provisioning import seed_initial_users_if_empty
-from dashboard.auth_ui import render_login_view, render_authenticated_placeholder
-from dashboard.org_ui import (
-    render_org_selector,
-    render_org_workspace,
-    render_platform_admin_orgs,
-    render_invitation_acceptance_view
-)
-
-@st.cache_resource
-def get_auth_service() -> AuthService:
-    service = AuthService()
-    try:
-        seed_initial_users_if_empty(service)
-    except RuntimeError as e:
-        st.error(f"Security Configuration Error: {e}")
-        st.stop()
-    return service
-
-auth_service = get_auth_service()
-
-@st.cache_resource
-def get_org_service() -> OrganizationService:
-    return OrganizationService(auth_service.db)
-
-@st.cache_resource
-def get_member_service() -> MembershipService:
-    return MembershipService(auth_service.db)
-
-@st.cache_resource
-def get_invitation_service() -> InvitationService:
-    return InvitationService(auth_service.db, auth_service)
-
-@st.cache_resource
-def get_tenant_operational_service() -> TenantOperationalService:
-    return TenantOperationalService(auth_service.db)
-
-org_service = get_org_service()
-member_service = get_member_service()
-invitation_service = get_invitation_service()
-tenant_op_service = get_tenant_operational_service()
-
-# Server-Side Session Validation on each execution
-current_raw_token = st.session_state.get("auth_token")
-if current_raw_token:
-    validated_user = auth_service.validate_session(current_raw_token)
-    if not validated_user:
-        st.session_state.pop("auth_token", None)
-        st.session_state.pop("auth_user", None)
-        st.session_state["auth_flash_message"] = "Your session has expired. Please sign in again."
-    else:
-        st.session_state["auth_user"] = validated_user
-else:
-    st.session_state.pop("auth_user", None)
-
-def is_authenticated() -> bool:
-    return st.session_state.get("auth_user") is not None
 
 @st.cache_data(ttl=30)
 def cached_discover_camera_devices():
@@ -193,290 +124,184 @@ def init_firebase():
             return False
 
 # ========== PAGE SETUP ==========
-st.set_page_config(
-    page_title="CrowdPatrol — AI Crowd Safety & Risk Intelligence",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+st.set_page_config(page_title="CrowdPatrol High-FPS Dashboard", page_icon="🚨", layout="wide")
+
+# ========== MINIMAL AUTHENTICATION GATE ==========
+from src.demo_auth import (
+    init_auth_db,
+    authenticate_user,
+    register_user,
+    user_count,
+    get_user_camera_configs,
+    save_user_camera_configs,
+    log_user_alert_event,
+    get_user_alert_ledger,
+    update_user_alert_status
 )
 
-# ========== PAGE NAVIGATION STATE ==========
-# SEC-02 Remediation: Capture invitation token from query params, store temporarily in session state,
-# and immediately clear query parameters to prevent token exposure in the browser URL bar.
-if "token" in st.query_params or st.query_params.get("page") == "accept_invite":
-    extracted_token = st.query_params.get("token")
-    if extracted_token:
-        st.session_state["invitation_token"] = extracted_token
-    st.session_state.current_page = "accept_invite"
-    st.query_params.clear()
-elif "current_page" not in st.session_state:
-    query_page = st.query_params.get("page", "landing")
-    st.session_state.current_page = "dashboard" if query_page == "dashboard" else "landing"
+init_auth_db()
 
-def switch_to_dashboard():
-    st.session_state.pop("invitation_token", None)
-    st.session_state.current_page = "dashboard"
-    st.query_params["page"] = "dashboard"
-    st.rerun()
+# Ensure at least one admin account exists for seamless zero-lockout demo setup
+if user_count() == 0:
+    from src.demo_auth import provision_user
+    provision_user("admin", "CrowdPatrolDemo2026!", role="Administrator", email="shreyaskeyboardtutorials@gmail.com")
 
-def switch_to_landing():
-    st.session_state.pop("invitation_token", None)
-    st.session_state.is_monitoring = False
-    st.session_state.current_page = "landing"
-    st.query_params["page"] = "landing"
-    st.rerun()
-
-def switch_to_login(message: str = None):
-    st.session_state.pop("invitation_token", None)
-    st.session_state.current_page = "login"
-    st.query_params["page"] = "login"
-    if message:
-        st.session_state["auth_flash_message"] = message
-    st.rerun()
-
-def switch_to_auth_home():
-    st.session_state.pop("invitation_token", None)
-    st.session_state.current_page = "authenticated_home"
-    st.query_params["page"] = "authenticated_home"
-    st.rerun()
-
-def handle_logout():
-    # Cleanly stop any running tenant camera managers and release hardware locks
-    for k in list(st.session_state.keys()):
-        if k.startswith("tenant_multi_cam_") or k == "multi_cam":
-            try:
-                if st.session_state[k] is not None:
-                    st.session_state[k].stop_all_cameras()
-            except Exception:
-                pass
-            st.session_state.pop(k, None)
-
-    token = st.session_state.get("auth_token")
-    if token:
-        try:
-            auth_service.revoke_session(token)
-        except Exception:
-            pass
-    st.session_state.pop("auth_token", None)
-    st.session_state.pop("auth_user", None)
-    st.session_state.pop("active_org", None)
-    st.session_state.pop("active_membership", None)
-    st.session_state.pop("invitation_token", None)
-    switch_to_landing()
-
-# Sidebar Navigation Switcher
-st.sidebar.markdown("### 🧭 Platform Navigation")
-
-if is_authenticated():
-    active_op = st.session_state["auth_user"]
-    st.sidebar.markdown(f"""
-    <div style="background:rgba(37,99,235,0.18); border:1px solid rgba(0,217,255,0.3); border-radius:8px; padding:8px 12px; margin-bottom:12px; font-family:var(--cp-font-mono); font-size:0.75rem;">
-        👤 <strong>{active_op.username}</strong><br>
-        <span style="color:#00D9FF;">ROLE: {active_op.role}</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    nav_default_idx = 0 if st.session_state.current_page == "landing" else 1
-    nav_selection = st.sidebar.radio(
-        "Select View:",
-        ["🏠 Home / Landing Page", "🏢 Organization Workspaces"],
-        index=nav_default_idx
-    )
-    if st.session_state.current_page in ("landing", "authenticated_home"):
-        if "Landing" in nav_selection and st.session_state.current_page != "landing":
-            switch_to_landing()
-        elif "Organization" in nav_selection and st.session_state.current_page != "authenticated_home":
-            switch_to_auth_home()
+if not st.session_state.get("authenticated", False):
+    _, col_auth, _ = st.columns([1, 2.0, 1])
+    with col_auth:
+        st.markdown("""
+        <div style="text-align: center; margin-top: 40px; margin-bottom: 20px;">
+            <h1 style="margin: 0; font-size: 2.3rem;">🚨 CrowdPatrol</h1>
+            <p style="color: #94A3B8; font-size: 0.95rem; margin-top: 6px;">
+                Autonomous High-FPS Crowd Density & Anomaly Monitoring Platform
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
         
-    if st.sidebar.button("🔒 Sign Out / Revoke Session", key="sidebar_logout_btn", use_container_width=True):
-        handle_logout()
-else:
-    nav_default_idx = 0 if st.session_state.current_page == "landing" else 1
-    nav_selection = st.sidebar.radio(
-        "Select View:",
-        ["🏠 Home / Landing Page", "🚨 Live Monitoring Dashboard"],
-        index=nav_default_idx
-    )
-    target_page = "landing" if "Landing" in nav_selection else "dashboard"
-    if st.session_state.current_page in ("landing", "dashboard") and target_page != st.session_state.current_page:
-        if target_page == "landing":
-            switch_to_landing()
-        else:
-            switch_to_dashboard()
+        tab_login, tab_register = st.tabs(["🔑 Sign In", "✨ Create Account"])
+        
+        with tab_login:
+            st.markdown("""
+            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem; color: #CBD5E1;">
+                🔒 Sign in to access your personalized CCTV cameras, alerts, and logs.
+            </div>
+            """, unsafe_allow_html=True)
+            with st.form("demo_login_form"):
+                login_user = st.text_input("Username or Registered Email", placeholder="e.g. admin or yourname@example.com")
+                login_pass = st.text_input("Password", type="password", placeholder="Enter your password")
+                submit_login = st.form_submit_button("Sign In to Command Center", type="primary", use_container_width=True)
+                
+                if submit_login:
+                    user_info = authenticate_user(login_user, login_pass)
+                    if user_info:
+                        st.session_state["authenticated"] = True
+                        st.session_state["user_id"] = user_info["id"]
+                        st.session_state["username"] = user_info["username"]
+                        st.session_state["user_email"] = user_info["email"]
+                        st.session_state["role"] = user_info["role"]
+                        
+                        # Configure dynamic email notifications for this user
+                        dispatcher = get_notification_dispatcher()
+                        dispatcher.set_user_email_recipient(user_info["email"])
+                        
+                        st.success(f"Welcome back, {user_info['username']}! Alerts routed to: {user_info['email']}")
+                        st.rerun()
+                    else:
+                        st.error("Authentication failed. Invalid username/email or password.")
 
-st.sidebar.divider()
+        with tab_register:
+            st.markdown("""
+            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem; color: #CBD5E1;">
+                📝 <strong>Verified Account Creation</strong>: Your email will be verified with a 6-digit code before account creation to ensure alerts reach you without confusion.
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Step 1: Input details and Request Verification Code
+            if not st.session_state.get("reg_code_sent", False):
+                with st.form("demo_register_step1_form"):
+                    reg_username = st.text_input("Username", value=st.session_state.get("reg_saved_username", ""), placeholder="e.g. security_lead")
+                    reg_email = st.text_input("Email Address (Alerts will route here)", value=st.session_state.get("reg_saved_email", ""), placeholder="e.g. yourname@example.com")
+                    reg_pass = st.text_input("Password (min 6 characters)", type="password", placeholder="Choose a password")
+                    reg_pass_confirm = st.text_input("Confirm Password", type="password", placeholder="Re-enter password")
+                    send_code_btn = st.form_submit_button("📩 Send Email Verification Code", type="primary", use_container_width=True)
+                    
+                    if send_code_btn:
+                        from src.demo_auth import validate_email
+                        reg_username = reg_username.strip()
+                        reg_email = reg_email.strip().lower()
+                        
+                        if not reg_username or len(reg_username) < 3:
+                            st.error("Username must be at least 3 characters long.")
+                        elif not reg_email or not validate_email(reg_email):
+                            st.error("Please enter a valid email address.")
+                        elif not reg_pass or len(reg_pass) < 6:
+                            st.error("Password must be at least 6 characters long.")
+                        elif reg_pass != reg_pass_confirm:
+                            st.error("Passwords do not match. Please re-enter.")
+                        else:
+                            import secrets
+                            otp_code = f"{secrets.randbelow(900000) + 100000}"
+                            dispatcher = get_notification_dispatcher()
+                            with st.spinner(f"Transmitting verification code to {reg_email}..."):
+                                ok_send, msg_send = dispatcher.send_verification_code_email(reg_email, otp_code, username=reg_username)
+                                if ok_send:
+                                    st.session_state["reg_code_sent"] = True
+                                    st.session_state["reg_target_email"] = reg_email
+                                    st.session_state["reg_target_username"] = reg_username
+                                    st.session_state["reg_target_pass"] = reg_pass
+                                    st.session_state["reg_expected_otp"] = otp_code
+                                    st.success(f"Verification code sent to `{reg_email}`! Please check your inbox.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Could not send verification email: {msg_send}")
 
-# ========== CONDITIONAL VIEW RENDERING ==========
-if st.session_state.current_page == "accept_invite":
-    raw_token = st.session_state.get("invitation_token") or st.query_params.get("token", "")
-    render_invitation_acceptance_view(
-        invitation_service=invitation_service,
-        auth_service=auth_service,
-        raw_token=raw_token,
-        on_success=lambda org: (
-            st.session_state.pop("invitation_token", None),
-            st.query_params.clear(),
-            st.session_state.update({"active_org": org, "org_view_mode": "workspace"}),
-            switch_to_auth_home()
-        ),
-        on_cancel=lambda: (
-            st.session_state.pop("invitation_token", None),
-            st.query_params.clear(),
-            switch_to_landing()
-        )
-    )
+            # Step 2: Verify Code and Activate Account
+            else:
+                target_em = st.session_state.get("reg_target_email", "")
+                target_un = st.session_state.get("reg_target_username", "")
+                st.info(f"📧 A 6-digit verification code was dispatched to **{target_em}**.")
+                
+                with st.form("demo_register_step2_form"):
+                    entered_otp = st.text_input("Enter 6-Digit Verification Code", max_chars=6, placeholder="e.g. 583921")
+                    col_v1, col_v2 = st.columns([1.5, 1])
+                    with col_v1:
+                        confirm_otp_btn = st.form_submit_button("✅ Verify & Complete Sign Up", type="primary", use_container_width=True)
+                    with col_v2:
+                        resend_btn = st.form_submit_button("🔄 Resend Code", use_container_width=True)
+                        
+                    if confirm_otp_btn:
+                        expected_otp = st.session_state.get("reg_expected_otp")
+                        if entered_otp.strip() == str(expected_otp).strip():
+                            target_pw = st.session_state.get("reg_target_pass", "")
+                            ok_reg, msg_reg, new_user = register_user(target_un, target_em, target_pw, role="Operator")
+                            if ok_reg and new_user:
+                                # Clean up temporary registration session state
+                                st.session_state.pop("reg_code_sent", None)
+                                st.session_state.pop("reg_target_email", None)
+                                st.session_state.pop("reg_target_username", None)
+                                st.session_state.pop("reg_target_pass", None)
+                                st.session_state.pop("reg_expected_otp", None)
+                                
+                                st.session_state["authenticated"] = True
+                                st.session_state["user_id"] = new_user["id"]
+                                st.session_state["username"] = new_user["username"]
+                                st.session_state["user_email"] = new_user["email"]
+                                st.session_state["role"] = new_user["role"]
+                                
+                                dispatcher = get_notification_dispatcher()
+                                dispatcher.set_user_email_recipient(new_user["email"])
+                                
+                                st.success(f"Email verified! Welcome, {new_user['username']}! Camera profile initialized.")
+                                st.rerun()
+                            else:
+                                st.error(msg_reg)
+                        else:
+                            st.error("Incorrect verification code. Please check your email and try again.")
+                            
+                    if resend_btn:
+                        import secrets
+                        new_otp = f"{secrets.randbelow(900000) + 100000}"
+                        st.session_state["reg_expected_otp"] = new_otp
+                        dispatcher = get_notification_dispatcher()
+                        with st.spinner(f"Resending new code to {target_em}..."):
+                            ok_re, msg_re = dispatcher.send_verification_code_email(target_em, new_otp, username=target_un)
+                            if ok_re:
+                                st.success("New verification code dispatched!")
+                            else:
+                                st.error(f"Failed to resend code: {msg_re}")
+                
+                if st.button("⬅️ Change Email / Edit Details", key="btn_cancel_reg"):
+                    st.session_state.pop("reg_code_sent", None)
+                    st.session_state.pop("reg_expected_otp", None)
+                    st.rerun()
+        
+        st.caption("Administrator defaults send to `shreyaskeyboardtutorials@gmail.com`. Each account maintains independent camera slots & alert history.")
     st.stop()
 
-if st.session_state.current_page == "landing":
-    # Sidebar quick launch & specs
-    if st.sidebar.button("🚀 Launch Dashboard", key="sidebar_landing_launch_btn", use_container_width=True, type="primary"):
-        switch_to_dashboard()
-
-    st.sidebar.markdown("""
-    #### 🛡️ CrowdPatrol System
-    - 🟢 **AI Engine:** YOLOv8 + DeepSORT
-    - 👥 **Detection:** Persons & Overhead Heads
-    - 📡 **Cloud Sync:** Firebase RTDB Active
-    - 📧 **Alerts:** Automated SMTP
-    - ⚡ **FPS:** 30+ Real-Time Target
-    """)
-    st.sidebar.divider()
-    st.sidebar.markdown("""
-    #### 📌 Quick Page Sections
-    - [Home](#hero)
-    - [Features](#features)
-    - [How It Works](#how-it-works)
-    - [Technology](#technology)
-    - [Applications](#applications)
-    - [About](#about)
-    """)
-    st.sidebar.caption("CrowdPatrol v2.5 | AMC Engineering College")
-
-    # Render landing page main content
-    render_landing_page(on_launch=switch_to_dashboard)
-    st.stop()
-
-if st.session_state.current_page == "login":
-    if is_authenticated():
-        switch_to_auth_home()
-    render_login_view(
-        auth_service,
-        on_success=lambda u, t: switch_to_auth_home(),
-        on_cancel=switch_to_landing,
-        auth_message=st.session_state.pop("auth_flash_message", None),
-        invitation_service=invitation_service
-    )
-    st.stop()
-
-if st.session_state.current_page == "authenticated_home":
-    if not is_authenticated():
-        switch_to_login("Authentication required to access operator workspace.")
-
-    current_user = st.session_state["auth_user"]
-    view_mode = st.session_state.get("org_view_mode", "workspace")
-
-    # Platform administrator view
-    if view_mode == "platform_admin" and is_platform_admin(current_user):
-        render_platform_admin_orgs(
-            user=current_user,
-            org_service=org_service,
-            on_return=lambda: (
-                st.session_state.update({"org_view_mode": "selector"}),
-                st.rerun()
-            )
-        )
-        st.stop()
-
-    # Active organization workspace
-    active_org = st.session_state.get("active_org")
-    if active_org and view_mode == "workspace":
-        try:
-            resolved_org, resolved_mem = resolve_tenant_context(
-                user=current_user,
-                requested_org_id=active_org.id,
-                db=org_service.db
-            )
-            st.session_state["active_org"] = resolved_org
-            st.session_state["active_membership"] = resolved_mem
-            def _clean_switch_org():
-                for k in list(st.session_state.keys()):
-                    if k.startswith("tenant_multi_cam_"):
-                        try:
-                            if st.session_state[k] is not None:
-                                st.session_state[k].stop_all_cameras()
-                        except Exception:
-                            pass
-                        st.session_state.pop(k, None)
-                st.session_state.pop("active_org", None)
-                st.session_state.pop("active_membership", None)
-                st.session_state.update({"org_view_mode": "selector"})
-                st.rerun()
-
-            render_org_workspace(
-                user=current_user,
-                organization=resolved_org,
-                membership=resolved_mem,
-                org_service=org_service,
-                member_service=member_service,
-                invitation_service=invitation_service,
-                on_switch_org=_clean_switch_org,
-                on_logout=handle_logout,
-                tenant_op_service=tenant_op_service
-            )
-            st.stop()
-        except PermissionError as pe:
-            st.warning(f"Organization access notice: {pe}")
-            st.session_state.pop("active_org", None)
-            st.session_state.pop("active_membership", None)
-
-    # Organization selector view
-    def _clean_select_org(org, mem):
-        for k in list(st.session_state.keys()):
-            if k.startswith("tenant_multi_cam_"):
-                try:
-                    if st.session_state[k] is not None:
-                        st.session_state[k].stop_all_cameras()
-                except Exception:
-                    pass
-                st.session_state.pop(k, None)
-        st.session_state.update({
-            "active_org": org,
-            "active_membership": mem,
-            "org_view_mode": "workspace"
-        })
-        st.rerun()
-
-    render_org_selector(
-        user=current_user,
-        org_service=org_service,
-        on_select_org=_clean_select_org,
-        on_platform_admin=lambda: (
-            st.session_state.update({"org_view_mode": "platform_admin"}),
-            st.rerun()
-        ),
-        on_logout=handle_logout
-    )
-    st.stop()
-
-if st.session_state.current_page == "dashboard":
-    if not is_authenticated():
-        # STRICT AUTHENTICATION GUARD: Reject unauthenticated access to the operational dashboard
-        if st.sidebar.button("🏠 ← Return to Landing Page", key="sidebar_dashboard_return_btn", use_container_width=True):
-            switch_to_landing()
-        render_login_view(
-            auth_service,
-            on_success=lambda u, t: switch_to_auth_home(),
-            on_cancel=switch_to_landing,
-            auth_message="🔒 Authentication Required: Direct access to the live monitoring dashboard is restricted. Please sign in with your authorized credentials."
-        )
-        st.stop()
-    else:
-        # Route authenticated users into the organization workspace
-        switch_to_auth_home()
-
-# If execution continues past here (Phase 2B+), user is in the Monitoring Dashboard view
-if st.sidebar.button("🏠 ← Return to Landing Page", key="sidebar_dashboard_return_btn", use_container_width=True):
-    switch_to_landing()
+# Ensure active user notification recipient is synchronized on session resume
+user_active_email = st.session_state.get("user_email")
+if user_active_email:
+    get_notification_dispatcher().set_user_email_recipient(user_active_email)
 
 st.title("🚨 CrowdPatrol - Autonomous Crowd Monitoring Dashboard")
 
@@ -497,6 +322,30 @@ if 'is_monitoring' not in st.session_state:
     st.session_state.is_monitoring = False
 
 # ========== SIDEBAR MODE & CONFIGURATION ==========
+user_email_disp = st.session_state.get('user_email', 'shreyaskeyboardtutorials@gmail.com')
+st.sidebar.markdown(f"""
+<div style="background: #1E293B; border: 1px solid #334155; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;">
+    <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-weight: 600;">Active Operator</div>
+    <div style="font-size: 0.92rem; color: #F8FAFC; font-weight: 500;">👤 {st.session_state.get('username', 'Operator')}</div>
+    <div style="font-size: 0.75rem; color: #38BDF8;">Role: {st.session_state.get('role', 'Administrator')}</div>
+    <div style="font-size: 0.72rem; color: #A7F3D0; margin-top: 4px; word-break: break-all;">✉️ Alerts: {user_email_disp}</div>
+</div>
+""", unsafe_allow_html=True)
+
+if st.sidebar.button("🚪 Log Out", key="btn_operator_logout", use_container_width=True):
+    # Stop any background camera streaming before session clear
+    if "multi_cam" in st.session_state and st.session_state.multi_cam is not None:
+        try:
+            st.session_state.multi_cam.stop_all_cameras()
+        except Exception:
+            pass
+    # Comprehensive clear of all user profile & state data
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.session_state["authenticated"] = False
+    st.session_state["is_monitoring"] = False
+    st.rerun()
+
 st.sidebar.header("🧭 Operation Mode & Input Selection")
 
 mode = st.sidebar.radio(
@@ -667,7 +516,9 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
         tiled_mode = (head_strategy == "2x2 Spatial Tiling")
         model_type = "models/crowdpatrol_yolov8n_head_v4.pt" if os.path.exists("models/crowdpatrol_yolov8n_head_v4.pt") else "models/crowdpatrol_yolov8n_finetuned_v2.pt"
     else:
-        model_choice = st.sidebar.selectbox("YOLOv8 Model Weight:", ["models/crowdpatrol_yolov8n_finetuned_v2.pt", "yolov8n.pt", "yolov8s.pt"])
+        is_live_cam = any(k in str(input_type) for k in ["Webcam", "Laptop", "Phone Camera"])
+        model_options = ["yolov8n.pt", "models/crowdpatrol_yolov8n_finetuned_v2.pt", "yolov8s.pt"] if is_live_cam else ["models/crowdpatrol_yolov8n_finetuned_v2.pt", "yolov8n.pt", "yolov8s.pt"]
+        model_choice = st.sidebar.selectbox("YOLOv8 Model Weight:", model_options)
         model_type = model_choice
 
     st.sidebar.divider()
@@ -675,63 +526,130 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
     default_conf = 0.25 if detection_mode == "🗣️ Head Mode — Experimental" else 0.35
     confidence = st.sidebar.slider("Confidence Threshold", 0.10, 1.00, default_conf, 0.05)
     detect_interval = st.sidebar.slider("Detection Interval (Frames)", 1, 10, 3)
-    res_choice = st.sidebar.selectbox("Web Preview Resolution:", ["1280x720 (Native Full HD)", "854x480 (Medium)", "640x360 (Ultra Fast)"])
+    res_choice = st.sidebar.selectbox("Web Preview Resolution:", ["854x480 (High Performance)", "640x360 (Ultra Fast)", "1280x720 (Native Full HD)"])
     if "640x360" in res_choice:
         preview_resolution = (640, 360)
-    elif "854x480" in res_choice:
-        preview_resolution = (854, 480)
-    else:
+    elif "1280x720" in res_choice:
         preview_resolution = (1280, 720)
+    else:
+        preview_resolution = (854, 480)
         
     device = st.sidebar.radio("Execution Device:", ["cpu", "cuda"], horizontal=True)
     enable_alerts = st.sidebar.checkbox("Sync Firebase Alerts", value=False)
     
     notif_dispatcher = get_notification_dispatcher()
-    if "direct_alert_manager" not in st.session_state:
+    current_uid = st.session_state.get("user_id", 1)
+    if "direct_alert_manager" not in st.session_state or st.session_state.get("direct_alert_user_id") != current_uid:
         st.session_state.direct_alert_manager = AlertManager(cooldown_seconds=10, enable_local_logging=True, notification_dispatcher=notif_dispatcher)
+        st.session_state.direct_alert_user_id = current_uid
+        # Register user-isolated alert ledger persistence listener
+        def _direct_user_alert_recorder(alt_event):
+            try:
+                # Dynamically stamp user ownership and recipient if missing
+                if getattr(alt_event, "user_id", None) is None:
+                    alt_event.user_id = current_uid
+                if getattr(alt_event, "recipient_email", None) is None:
+                    alt_event.recipient_email = user_email_disp
+
+                status = getattr(alt_event, "status", "ACTIVE")
+                is_ack = getattr(alt_event, "acknowledged", False)
+                ack_by = getattr(alt_event, "acknowledged_by", None)
+
+                if status in ("ACKNOWLEDGED", "RESOLVED") or is_ack:
+                    update_user_alert_status(
+                        user_id=current_uid,
+                        alert_id=getattr(alt_event, "alert_id", "ALT"),
+                        status=status,
+                        acknowledged=is_ack,
+                        acknowledged_by=ack_by
+                    )
+                else:
+                    log_user_alert_event(
+                        user_id=current_uid,
+                        alert_id=getattr(alt_event, "alert_id", "ALT"),
+                        camera_id=getattr(alt_event, "camera_id", "CAM"),
+                        camera_name=getattr(alt_event, "camera_name", "Camera"),
+                        risk_level=getattr(alt_event, "risk_level", "HIGH"),
+                        risk_score=float(getattr(alt_event, "risk_score", 0.0)),
+                        reason=getattr(alt_event, "reason", "Elevated risk condition"),
+                        primary_risk_zone=getattr(alt_event, "primary_risk_zone", "A1"),
+                        status=status,
+                        acknowledged=is_ack,
+                        acknowledged_by=ack_by
+                    )
+            except Exception:
+                pass
+        st.session_state.direct_alert_manager.register_listener(_direct_user_alert_recorder)
     direct_alert_mgr = st.session_state.direct_alert_manager
     direct_alert_mgr.attach_notification_dispatcher(notif_dispatcher)
     
     enable_sound_alarm = st.sidebar.checkbox("🔔 Enable Emergency Alarm Sound", value=True, key="direct_sound_alarm")
     
+    st.sidebar.markdown("##### 🚨 Live Operator Incident Controls")
     active_direct_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
     if active_direct_alt is not None:
-        sev = getattr(active_direct_alt, "severity", active_direct_alt.risk_level)
-        st.sidebar.warning(f"🚨 ACTIVE {sev}: {active_direct_alt.risk_score:.1f}")
-        col_act1, col_act2 = st.sidebar.columns(2)
-        with col_act1:
+        sev = getattr(active_direct_alt, "severity", active_direct_alt.risk_level).upper()
+        if sev in ("HIGH", "CRITICAL"):
             if not active_direct_alt.acknowledged:
-                if st.sidebar.button("🔔 Ack", key="ack_btn_direct_01", use_container_width=True):
-                    direct_alert_mgr.acknowledge_alert("DIRECT-01", operator_id="DirectStreamOperator")
-                    st.sidebar.success("Alert Acknowledged!")
-                    st.rerun()
+                st.sidebar.warning(f"🚨 ACTIVE {sev}: {active_direct_alt.risk_score:.1f}")
             else:
-                st.sidebar.caption(f"✓ Ack by {active_direct_alt.acknowledged_by or 'Operator'}")
-        with col_act2:
-            if st.sidebar.button("✅ Resolve", key="res_btn_direct_01", use_container_width=True):
-                direct_alert_mgr.resolve_alert("DIRECT-01", operator_id="DirectStreamOperator", note="Resolved via dashboard")
+                st.sidebar.info(f"✓ {sev} ACKNOWLEDGED: {active_direct_alt.risk_score:.1f}")
+        elif sev == "MEDIUM":
+            st.sidebar.info(f"🟡 MEDIUM RISK NOTICE: {active_direct_alt.risk_score:.1f} (Informational)")
+    else:
+        st.sidebar.caption("System Status: Normal / Standby")
+
+    col_act1, col_act2 = st.sidebar.columns(2)
+    with col_act1:
+        if st.sidebar.button("🔔 Ack Alert", key="ack_btn_direct_01", use_container_width=True, help="Acknowledge current High/Critical alert and silence alarm"):
+            cur_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
+            if cur_alt and getattr(cur_alt, "severity", cur_alt.risk_level).upper() in ("HIGH", "CRITICAL"):
+                direct_alert_mgr.acknowledge_alert("DIRECT-01", operator_id=st.session_state.get("username", "DirectStreamOperator"))
+                update_user_alert_status(
+                    user_id=current_uid,
+                    alert_id=cur_alt.alert_id,
+                    status="ACKNOWLEDGED",
+                    acknowledged=True,
+                    acknowledged_by=st.session_state.get("username", "DirectStreamOperator")
+                )
+                st.sidebar.success("Alert Acknowledged & Silenced!")
+            else:
+                st.sidebar.caption("No unacknowledged High/Critical alert.")
+            st.rerun()
+    with col_act2:
+        if st.sidebar.button("✅ Resolve", key="res_btn_direct_01", use_container_width=True, help="Resolve active High/Critical alert"):
+            cur_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
+            if cur_alt and getattr(cur_alt, "severity", cur_alt.risk_level).upper() in ("HIGH", "CRITICAL"):
+                direct_alert_mgr.resolve_alert("DIRECT-01", operator_id=st.session_state.get("username", "DirectStreamOperator"), note="Resolved via dashboard")
+                update_user_alert_status(
+                    user_id=current_uid,
+                    alert_id=cur_alt.alert_id,
+                    status="RESOLVED"
+                )
                 st.sidebar.success("Alert Resolved!")
-                st.rerun()
+            else:
+                st.sidebar.caption("No active High/Critical alert.")
+            st.rerun()
     
     st.sidebar.divider()
     col_start, col_stop = st.sidebar.columns(2)
     with col_start:
         if st.button("▶️ Start Monitoring", use_container_width=True):
             st.session_state.is_monitoring = True
+            st.session_state.direct_stream_last_frame = 0
     with col_stop:
         if st.button("⏹️ Stop", use_container_width=True):
             st.session_state.is_monitoring = False
+            st.session_state.direct_stream_last_frame = 0
 
 elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     st.sidebar.divider()
     st.sidebar.header("📹 Camera Source Configuration")
     
-    config_path = Path("config/cameras.json")
-    if config_path.exists():
-        with open(config_path, "r") as f:
-            cam_json_cfg = json.load(f)
-    else:
-        cam_json_cfg = {"cameras": []}
+    current_uid = st.session_state.get("user_id", 1)
+    # Load user-specific camera configuration from database
+    user_saved_cams = get_user_camera_configs(current_uid)
+    cam_json_cfg = {"cameras": user_saved_cams}
         
     updated_cameras = []
     
@@ -896,8 +814,15 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     st.session_state.current_ui_cameras = updated_cameras
             
     if updated_cameras and st.sidebar.button("💾 Save Camera Config", use_container_width=True):
-        with open(config_path, "w") as f:
-            json.dump({"cameras": updated_cameras}, f, indent=2)
+        # Save to user profile in SQLite database
+        save_user_camera_configs(current_uid, updated_cameras)
+        # Keep config/cameras.json updated as backup
+        config_path = Path("config/cameras.json")
+        try:
+            with open(config_path, "w") as f:
+                json.dump({"cameras": updated_cameras}, f, indent=2)
+        except Exception:
+            pass
         if "multi_cam" in st.session_state and st.session_state.multi_cam is not None:
             for cam_item in updated_cameras:
                 st.session_state.multi_cam.reconfigure_camera(
@@ -908,7 +833,7 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                     device_name=cam_item.get("device_name"),
                     enabled=cam_item["enabled"]
                 )
-        st.sidebar.success("Saved camera configuration!")
+        st.sidebar.success(f"Saved custom camera layout for {st.session_state.get('username', 'your profile')}!")
         st.rerun()
 
     st.sidebar.divider()
@@ -936,10 +861,12 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
     
     if "multi_cam" in st.session_state and st.session_state.multi_cam and st.session_state.multi_cam.alert_manager:
         cctv_active = st.session_state.multi_cam.get_active_alerts()
-        if cctv_active:
-            st.sidebar.markdown("### 🚨 Active CCTV Alerts")
-            for a in cctv_active:
-                sev = getattr(a, "severity", a.risk_level)
+        # Filter for HIGH and CRITICAL alerts for operator action
+        actionable_alts = [a for a in cctv_active if getattr(a, "severity", a.risk_level).upper() in ("HIGH", "CRITICAL")]
+        if actionable_alts:
+            st.sidebar.markdown("### 🚨 Active CCTV Alerts (High / Critical)")
+            for a in actionable_alts:
+                sev = getattr(a, "severity", a.risk_level).upper()
                 st.sidebar.caption(f"**{a.camera_id}** ({a.camera_name}) — {sev} ({a.risk_score:.1f})")
                 col_c1, col_c2 = st.sidebar.columns([1, 1])
                 with col_c1:
@@ -1009,34 +936,52 @@ with chart_col2:
 st.subheader("🚨 Automated Alert Management & Event Feed")
 alert_summary_placeholder = st.empty()
 alerts_placeholder = st.empty()
-history_expander = st.expander("📜 Historical Alert Ledger", expanded=False)
+history_expander = st.expander("📜 Historical Alert Ledger (Your Account)", expanded=False)
 history_placeholder = history_expander.empty()
+
+# Render persistent historical ledger for the current user
+current_uid = st.session_state.get("user_id", 1)
+user_ledger_events = get_user_alert_ledger(current_uid, limit=30)
+if user_ledger_events:
+    ledger_rows = []
+    for item in user_ledger_events:
+        r_color = "#ef4444" if item["risk_level"] == "HIGH" else ("#f59e0b" if item["risk_level"] == "MEDIUM" else "#10b981")
+        ack_txt = f"✓ Ack ({item['acknowledged_by'] or 'Operator'})" if item["acknowledged"] else "Pending"
+        ledger_rows.append(
+            f"<tr>"
+            f"<td style='padding:5px 8px; border-bottom:1px solid #334155; font-size:0.85em;'>{item['timestamp']}</td>"
+            f"<td style='padding:5px 8px; border-bottom:1px solid #334155; font-size:0.85em;'><b>{item['camera_id']}</b> ({item['camera_name']})</td>"
+            f"<td style='padding:5px 8px; border-bottom:1px solid #334155; font-size:0.85em; color:{r_color}; font-weight:600;'>{item['risk_level']} ({item['risk_score']:.1f})</td>"
+            f"<td style='padding:5px 8px; border-bottom:1px solid #334155; font-size:0.85em;'>{item['reason']}</td>"
+            f"<td style='padding:5px 8px; border-bottom:1px solid #334155; font-size:0.85em;'>{item['primary_risk_zone']}</td>"
+            f"<td style='padding:5px 8px; border-bottom:1px solid #334155; font-size:0.85em;'>{ack_txt}</td>"
+            f"</tr>"
+        )
+    history_placeholder.markdown(
+        f"<table style='width:100%; border-collapse:collapse; margin-top:8px;'>"
+        f"<thead><tr style='background:#1e293b; color:#94a3b8; font-size:0.8em; text-align:left;'>"
+        f"<th style='padding:6px 8px;'>Timestamp</th><th style='padding:6px 8px;'>Camera</th><th style='padding:6px 8px;'>Risk</th>"
+        f"<th style='padding:6px 8px;'>Reason</th><th style='padding:6px 8px;'>Zone</th><th style='padding:6px 8px;'>Status</th>"
+        f"</tr></thead><tbody>{''.join(ledger_rows)}</tbody></table>",
+        unsafe_allow_html=True
+    )
+else:
+    history_placeholder.caption("No alerts logged for this profile yet. Monitored alerts will appear here.")
 
 notif_dispatcher = get_notification_dispatcher()
 
-notif_expander = st.expander("📬 Notification Delivery System (Email & SMS)", expanded=False)
+notif_expander = st.expander("📬 Notification Delivery System (Email Alerts)", expanded=False)
 with notif_expander:
     notif_status_ph = st.empty()
-    st.markdown("##### 🧪 Explicit Test Notifications")
-    t_col1, t_col2 = st.columns(2)
-    with t_col1:
-        test_email_target = st.text_input("Test Email Recipient (Optional):", key="test_email_target_inp", placeholder="operator@example.com")
-        if st.button("📧 Send Test Email", key="btn_send_test_email"):
-            with st.spinner("Transmitting test email..."):
-                ok_em, msg_em = notif_dispatcher.send_test_email(to_email=test_email_target if test_email_target else None)
-                if ok_em:
-                    st.success(msg_em)
-                else:
-                    st.error(msg_em)
-    with t_col2:
-        test_sms_target = st.text_input("Test SMS Recipient (Optional):", key="test_sms_target_inp", placeholder="+1234567890")
-        if st.button("📱 Send Test SMS", key="btn_send_test_sms"):
-            with st.spinner("Transmitting test SMS..."):
-                ok_sms, msg_sms = notif_dispatcher.send_test_sms(to_phone=test_sms_target if test_sms_target else None)
-                if ok_sms:
-                    st.success(msg_sms)
-                else:
-                    st.error(msg_sms)
+    st.markdown("##### 🧪 Explicit Test Notification (Email)")
+    test_email_target = st.text_input("Test Email Recipient (Optional):", key="test_email_target_inp", placeholder="operator@example.com")
+    if st.button("📧 Send Test Email", key="btn_send_test_email"):
+        with st.spinner("Transmitting test email..."):
+            ok_em, msg_em = notif_dispatcher.send_test_email(to_email=test_email_target if test_email_target else None)
+            if ok_em:
+                st.success(msg_em)
+            else:
+                st.error(msg_em)
     st.markdown("##### 📜 Delivery Log")
     notif_history_ph = st.empty()
 
@@ -1132,7 +1077,12 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                 except Exception:
                     pass
             
-            frame_count = 0
+            saved_frame_pos = st.session_state.get("direct_stream_last_frame", 0)
+            if saved_frame_pos > 0 and isinstance(video_source, str) and not str(video_source).isdigit():
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, saved_frame_pos - 1))
+                frame_count = max(0, saved_frame_pos - 1)
+            else:
+                frame_count = 0
             from src.capture import FPSTracker
             source_fps = float(cap.get(cv2.CAP_PROP_FPS))
             if source_fps <= 0 or np.isnan(source_fps):
@@ -1149,9 +1099,11 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     if not ret:
                         status_box.success("✅ Video stream completed.")
                         st.session_state.is_monitoring = False
+                        st.session_state.direct_stream_last_frame = 0
                         break
                     
                     frame_count += 1
+                    st.session_state.direct_stream_last_frame = frame_count
                     is_detect_frame = (frame_count == 1 or frame_count % detect_interval == 0)
                     
                     if detection_mode == "🗣️ Head Mode — Experimental":
@@ -1241,7 +1193,12 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         
                         # Density & risk calculation
                         density_map, max_density = density_estimator.calculate_density(current_tracks, frame.shape)
-                        anomaly_score = risk_assessor.calculate_movement_anomaly(current_tracks, frame.shape)
+                        motion_anomaly = motion_summary.get("anomaly_score", 0.0)
+                        if current_tracks:
+                            track_anomaly = risk_assessor.calculate_movement_anomaly(current_tracks, frame.shape)
+                            anomaly_score = max(track_anomaly, motion_anomaly)
+                        else:
+                            anomaly_score = motion_anomaly
                         
                         risk_res = risk_assessor.assess_frame(
                             max_density=max_density,
@@ -1350,7 +1307,8 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                             "fps": avg_fps,
                             "last_frame_time": datetime.now().isoformat()
                         }
-                    metrics_logger.log(metrics_payload, frame_count)
+                    if frame_count % 5 == 0:
+                        metrics_logger.log(metrics_payload, frame_count)
                     
                     # Pass telemetry to persistent AlertManager under DIRECT-01
                     direct_telemetry = dict(metrics_payload)
@@ -1365,31 +1323,44 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     pending_direct_alarms = direct_alert_mgr.get_pending_alarm_alerts()
                     active_direct_alt = direct_alert_mgr.get_camera_alert_status("DIRECT-01")
 
-                    # Audio chime trigger if new HIGH alert triggered and sound enabled
+                    # Audio alarm trigger if new HIGH/CRITICAL alert triggered and sound enabled
                     audio_direct_html = ""
                     if pending_direct_alarms and enable_sound_alarm:
-                        audio_direct_html = """<audio autoplay style="display:none;"><source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUtvT18AAAAA//8AAAD//wAA//8=" type="audio/wav"></audio>"""
+                        highest_pending_sev = max(
+                            [getattr(a, "severity", a.risk_level).upper() for a in pending_direct_alarms],
+                            key=lambda s: 2 if s == "CRITICAL" else (1 if s == "HIGH" else 0)
+                        )
+                        audio_direct_html = get_alarm_audio_html(highest_pending_sev)
 
-                    # Render Emergency Flashing Banner at top of Direct Stream
-                    if unack_direct_high:
-                        system_banner.markdown(f"""{audio_direct_html}
-                        <div class="cp-emergency-banner">
-                            <div style="font-size:1.15em; font-weight:bold;">🚨 HIGH-RISK SECURITY EMERGENCY ALERT</div>
-                            <div style="margin-top:4px; font-size:0.95em;">Camera: <b>Direct Stream (DIRECT-01)</b> | Risk Score: <b>{combined_score:.1f}/100</b></div>
-                            <div style="margin-top:2px; font-size:0.90em;">Reason: <b>{active_direct_alt.reason if active_direct_alt else 'High crowd risk'}</b></div>
-                            <div style="margin-top:4px; font-size:0.82em; color:#ffdddd;">⚠️ Immediate operator attention required. Click 'Acknowledge Alert' in sidebar to silence alarm while continuing active monitoring.</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    elif active_direct_alt and active_direct_alt.risk_level == "HIGH" and active_direct_alt.acknowledged:
-                        system_banner.warning(f"⚠️ **DIRECT STREAM STATUS: HIGH RISK (ACKNOWLEDGED)** | Risk Score: **{combined_score:.1f}** | Camera: **Direct Stream (DIRECT-01)**")
-                    elif active_direct_alt and active_direct_alt.risk_level == "MEDIUM":
-                        system_banner.warning(f"🟡 **DIRECT STREAM STATUS: ELEVATED / MEDIUM RISK** | Risk Score: **{combined_score:.1f}** | Camera: **Direct Stream (DIRECT-01)**")
-                    else:
-                        system_banner.empty()
+                    # Render Emergency Flashing Banner only when alert state changes (eliminates DOM thrashing)
+                    new_banner_state = (
+                        bool(unack_direct_high),
+                        active_direct_alt.risk_level if active_direct_alt else None,
+                        getattr(active_direct_alt, 'acknowledged', False) if active_direct_alt else False,
+                        bool(pending_direct_alarms)
+                    )
+                    if new_banner_state != st.session_state.get("last_direct_banner_state"):
+                        st.session_state.last_direct_banner_state = new_banner_state
+                        if unack_direct_high:
+                            system_banner.markdown(f"""{audio_direct_html}
+                            <div class="cp-emergency-banner">
+                                <div style="font-size:1.15em; font-weight:bold;">🚨 HIGH-RISK SECURITY EMERGENCY ALERT</div>
+                                <div style="margin-top:4px; font-size:0.95em;">Camera: <b>Direct Stream (DIRECT-01)</b> | Risk Score: <b>{combined_score:.1f}/100</b></div>
+                                <div style="margin-top:2px; font-size:0.90em;">Reason: <b>{active_direct_alt.reason if active_direct_alt else 'High crowd risk'}</b></div>
+                                <div style="margin-top:4px; font-size:0.82em; color:#ffdddd;">⚠️ Immediate operator attention required. Click 'Ack Alert' in sidebar to silence alarm while continuing active monitoring.</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        elif active_direct_alt and active_direct_alt.risk_level == "HIGH" and active_direct_alt.acknowledged:
+                            system_banner.warning(f"⚠️ **DIRECT STREAM STATUS: HIGH RISK (ACKNOWLEDGED)** | Risk Score: **{combined_score:.1f}** | Camera: **Direct Stream (DIRECT-01)**")
+                        elif active_direct_alt and active_direct_alt.risk_level == "MEDIUM":
+                            system_banner.warning(f"🟡 **DIRECT STREAM STATUS: ELEVATED / MEDIUM RISK** | Risk Score: **{combined_score:.1f}** | Camera: **Direct Stream (DIRECT-01)**")
+                        else:
+                            system_banner.empty()
 
-                    # Render Automated Alert Management Feed & Summary for DIRECT-01
-                    render_dashboard_alerts(direct_alert_mgr, alert_summary_placeholder, alerts_placeholder, history_placeholder)
-                    render_dashboard_notifications(notif_dispatcher, notif_status_ph, notif_history_ph)
+                    # Render Automated Alert Management Feed & Summary for DIRECT-01 (Throttled for high FPS)
+                    if frame_count % 8 == 0:
+                        render_dashboard_alerts(direct_alert_mgr, alert_summary_placeholder, alerts_placeholder, None)
+                        render_dashboard_notifications(notif_dispatcher, notif_status_ph, None)
 
                     if alert_manager and (time.time() - last_firebase_update > 1.0):
                         alert_manager.update_dashboard_data(metrics_payload)
@@ -1401,7 +1372,7 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                     else:
                         display_frame = annotated_frame
 
-                    _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                    _, jpeg_buffer = cv2.imencode('.jpg', display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                     video_placeholder.image(jpeg_buffer.tobytes(), use_container_width=True)
                     
                     # Update Session State History for Real-Time Charts
@@ -1449,22 +1420,18 @@ if mode == "🎥 Interactive Web Pipeline (Direct Stream)":
                         quality_bar.progress(min(max(0.0, data_quality_score), 1.0), text=f"Data Quality ({data_quality_score*100:.0f}%)")
                         fps_metric.metric("⚡ Pipeline FPS", f"{avg_fps:.1f}", delta=f"Src: {source_fps:.0f} FPS", delta_color="off")
                     
-                    # OPTIMIZATION: Throttled Chart Updates (Every 20 Frames) to Prevent Browser UI Freeze
-                    if frame_count % 20 == 0 and len(st.session_state.time_history) > 1:
-                        fig_risk = create_risk_chart(
-                            list(st.session_state.time_history),
-                            list(st.session_state.risk_history)
-                        )
-                        risk_chart.plotly_chart(fig_risk, use_container_width=True)
+                    # OPTIMIZATION: Ultra-lightweight native line charts (Zero Plotly Canvas freeze)
+                    if frame_count % 15 == 0 and len(st.session_state.time_history) > 1:
+                        import pandas as pd
+                        df1 = pd.DataFrame({"Risk Score": list(st.session_state.risk_history)})
+                        risk_chart.line_chart(df1, height=180)
                         
                         count_chart_label = "Heads" if detection_mode == "🗣️ Head Mode — Experimental" else "Persons"
-                        fig_person = create_person_density_chart(
-                            list(st.session_state.time_history),
-                            list(st.session_state.person_history),
-                            list(st.session_state.density_history),
-                            person_label=count_chart_label
-                        )
-                        person_chart.plotly_chart(fig_person, use_container_width=True)
+                        df2 = pd.DataFrame({
+                            count_chart_label: list(st.session_state.person_history),
+                            "Density": list(st.session_state.density_history)
+                        })
+                        person_chart.line_chart(df2, height=180)
                     
                     # Adaptive frame cadence smoothing (smooths burst-and-stall without adding artificial latency)
                     frame_elapsed = time.perf_counter() - t_start
@@ -1528,6 +1495,7 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
             
         reinit_needed = (
             "multi_cam" not in st.session_state
+            or st.session_state.get("multi_cam_user_id") != current_uid
             or st.session_state.get("multi_cam_mode") != mode_key
             or st.session_state.get("multi_cam_device") != device
             or st.session_state.get("multi_cam_detect_interval") != detect_interval
@@ -1547,7 +1515,46 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                 tiled_mode=tiled_mode
             )
             multi_cam.attach_notification_dispatcher(notif_dispatcher)
+            # Register user-isolated alert ledger persistence listener
+            def _user_alert_recorder(alt_event):
+                try:
+                    # Dynamically stamp user ownership and recipient if missing
+                    if getattr(alt_event, "user_id", None) is None:
+                        alt_event.user_id = current_uid
+                    if getattr(alt_event, "recipient_email", None) is None:
+                        alt_event.recipient_email = user_email_disp
+
+                    status = getattr(alt_event, "status", "ACTIVE")
+                    is_ack = getattr(alt_event, "acknowledged", False)
+                    ack_by = getattr(alt_event, "acknowledged_by", None)
+
+                    if status in ("ACKNOWLEDGED", "RESOLVED") or is_ack:
+                        update_user_alert_status(
+                            user_id=current_uid,
+                            alert_id=getattr(alt_event, "alert_id", "ALT"),
+                            status=status,
+                            acknowledged=is_ack,
+                            acknowledged_by=ack_by
+                        )
+                    else:
+                        log_user_alert_event(
+                            user_id=current_uid,
+                            alert_id=getattr(alt_event, "alert_id", "ALT"),
+                            camera_id=getattr(alt_event, "camera_id", "CAM"),
+                            camera_name=getattr(alt_event, "camera_name", "Camera"),
+                            risk_level=getattr(alt_event, "risk_level", "HIGH"),
+                            risk_score=float(getattr(alt_event, "risk_score", 0.0)),
+                            reason=getattr(alt_event, "reason", "Elevated risk condition"),
+                            primary_risk_zone=getattr(alt_event, "primary_risk_zone", "A1"),
+                            status=status,
+                            acknowledged=is_ack,
+                            acknowledged_by=ack_by
+                        )
+                except Exception:
+                    pass
+            multi_cam.alert_manager.register_listener(_user_alert_recorder)
             st.session_state.multi_cam = multi_cam
+            st.session_state.multi_cam_user_id = current_uid
             st.session_state.multi_cam_mode = mode_key
             st.session_state.multi_cam_device = device
             st.session_state.multi_cam_detect_interval = detect_interval
@@ -1560,9 +1567,15 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
         # Synchronize UI sidebar camera selections with MultiCameraManager before starting
         if not st.session_state.get("multi_cam_started", False):
             ui_cams = st.session_state.get("current_ui_cameras", updated_cameras)
+            if not ui_cams:
+                ui_cams = get_user_camera_configs(current_uid)
             if ui_cams:
-                with open(config_path, "w") as f:
-                    json.dump({"cameras": ui_cams}, f, indent=2)
+                config_path = Path("config/cameras.json")
+                try:
+                    with open(config_path, "w") as f:
+                        json.dump({"cameras": ui_cams}, f, indent=2)
+                except Exception:
+                    pass
                 for cam_item in ui_cams:
                     multi_cam.reconfigure_camera(
                         cam_item["id"],
@@ -1679,11 +1692,14 @@ elif mode == "🖥️ Multi-Camera Command Center (CCTV Grid)":
                     pending_alarms = multi_cam.get_pending_alarm_alerts()
                     do_dom_update = (cycle_count == 1 or cycle_count % 4 == 0 or len(unack_high_alts) > 0)
                     
-                    # 1a. Trigger HTML5 Audio Alarm if new HIGH alert triggered and sound enabled
+                    # 1a. Trigger HTML5 Audio Alarm if new HIGH/CRITICAL alert triggered and sound enabled
                     audio_html = ""
                     if pending_alarms and enable_sound_alarm:
-                        # Embedded base64 audio chime sound
-                        audio_html = """<audio autoplay style="display:none;"><source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUtvT18AAAAA//8AAAD//wAA//8=" type="audio/wav"></audio>"""
+                        highest_pending_sev = max(
+                            [getattr(a, "severity", a.risk_level).upper() for a in pending_alarms],
+                            key=lambda s: 2 if s == "CRITICAL" else (1 if s == "HIGH" else 0)
+                        )
+                        audio_html = get_alarm_audio_html(highest_pending_sev)
 
                     # 1b. Update overall risk banner / Emergency Flashing Banner
                     if do_dom_update:

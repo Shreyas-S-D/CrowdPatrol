@@ -133,6 +133,8 @@ class AlertEvent:
     timestamp_unix: int = 0
     organization_id: Optional[str] = None
     session_id: Optional[str] = None
+    user_id: Optional[int] = None
+    recipient_email: Optional[str] = None
 
     def __post_init__(self):
         if self.severity == "LOW" and self.risk_level:

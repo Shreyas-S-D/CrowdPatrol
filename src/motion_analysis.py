@@ -121,7 +121,8 @@ class CrowdMotionAnalyzer:
                 "max_speed": 0.0,
                 "dominant_direction": "STATIONARY",
                 "sudden_movement_count": 0,
-                "camera_motion_detected": False
+                "camera_motion_detected": False,
+                "anomaly_score": 0.0
             }
             self.last_grid_matrix = grid_matrix
             self.last_summary = summary
@@ -223,12 +224,29 @@ class CrowdMotionAnalyzer:
         else:
             dominant_direction = "STATIONARY"
             
+        # Anomaly score combining sudden acceleration spikes, local speed surge, and directional turbulence
+        moving_coherences = [cell.coherence for row in grid_matrix for cell in row if cell.magnitude > self.min_motion_threshold]
+        turbulence = (1.0 - float(np.mean(moving_coherences))) if moving_coherences else 0.0
+        local_anomaly = max(0.0, max_speed - avg_speed)
+        
+        # Continuous normalized anomaly metric [0.0, 1.0]
+        if avg_speed < 0.15 and max_speed < 0.4:
+            motion_anomaly = 0.0
+        else:
+            spike_term = min(1.0, sudden_count / 3.0)
+            surge_term = min(1.0, local_anomaly / 2.5)
+            turb_term = min(1.0, turbulence)
+            motion_anomaly = float(np.clip(0.45 * spike_term + 0.35 * surge_term + 0.20 * turb_term, 0.0, 1.0))
+            if camera_motion_detected:
+                motion_anomaly *= 0.5  # Attenuate if whole camera moved
+            
         summary = {
             "avg_speed": round(avg_speed, 2),
             "max_speed": round(max_speed, 2),
             "dominant_direction": dominant_direction,
             "sudden_movement_count": sudden_count,
-            "camera_motion_detected": camera_motion_detected
+            "camera_motion_detected": camera_motion_detected,
+            "anomaly_score": round(motion_anomaly, 2)
         }
         
         self.last_grid_matrix = grid_matrix

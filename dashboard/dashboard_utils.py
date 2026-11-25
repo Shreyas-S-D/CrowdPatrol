@@ -10,10 +10,75 @@ import os
 import math
 import csv
 import json
+import io
+import wave
+import struct
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 import numpy as np
+
+_BEEP_WAV_B64: Optional[str] = None
+_SIREN_WAV_B64: Optional[str] = None
+
+def get_beep_b64() -> str:
+    """Generates or returns cached 880 Hz beep audio in base64 WAV format."""
+    global _BEEP_WAV_B64
+    if _BEEP_WAV_B64 is None:
+        rate = 16000
+        duration = 0.25 # seconds
+        freq = 880.0
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            n_samples = int(rate * duration)
+            data = []
+            for i in range(n_samples):
+                t = float(i) / rate
+                env = min(1.0, i / (rate * 0.02), (n_samples - i) / (rate * 0.02))
+                sample = int(32767.0 * 0.8 * env * math.sin(2.0 * math.pi * freq * t))
+                data.append(struct.pack('<h', sample))
+            wav.writeframes(b''.join(data))
+        _BEEP_WAV_B64 = base64.b64encode(buf.getvalue()).decode('ascii')
+    return _BEEP_WAV_B64
+
+def get_siren_b64() -> str:
+    """Generates or returns cached dual-frequency alternating emergency siren in base64 WAV format."""
+    global _SIREN_WAV_B64
+    if _SIREN_WAV_B64 is None:
+        rate = 16000
+        duration = 0.7 # seconds
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            n_samples = int(rate * duration)
+            data = []
+            phase = 0.0
+            for i in range(n_samples):
+                t = float(i) / rate
+                freq = 600.0 + 500.0 * (0.5 + 0.5 * math.sin(2.0 * math.pi * 3.5 * t))
+                phase += 2.0 * math.pi * freq / rate
+                env = min(1.0, i / (rate * 0.03), (n_samples - i) / (rate * 0.03))
+                sample = int(32767.0 * 0.85 * env * math.sin(phase))
+                data.append(struct.pack('<h', sample))
+            wav.writeframes(b''.join(data))
+        _SIREN_WAV_B64 = base64.b64encode(buf.getvalue()).decode('ascii')
+    return _SIREN_WAV_B64
+
+def get_alarm_audio_html(severity: str = "HIGH") -> str:
+    """Returns HTML5 autoplay audio tag with Beep (for HIGH) or Siren (for CRITICAL)."""
+    sev_upper = str(severity).upper()
+    if sev_upper == "CRITICAL":
+        b64_audio = get_siren_b64()
+    else:
+        b64_audio = get_beep_b64()
+    return f'<audio autoplay style="display:none;"><source src="data:audio/wav;base64,{b64_audio}" type="audio/wav"></audio>'
+
 
 
 def clean_native_value(val: Any, default: Any = 0.0) -> Any:
@@ -306,16 +371,27 @@ def render_dashboard_alerts(alert_mgr, summary_ph, feed_ph, history_ph=None):
         return
         
     summary = alert_mgr.get_alert_summary()
-    with summary_ph.container():
-        try:
-            import streamlit as st
-            s_col1, s_col2, s_col3, s_col4 = st.columns(4)
-            s_col1.metric("🚨 Active Alerts", summary["active"])
-            s_col2.metric("🔴 High / Critical", summary["high"] + summary["critical"])
-            s_col3.metric("🟡 Medium Risk", summary["medium"])
-            s_col4.metric("✅ Resolved", summary["resolved"])
-        except Exception:
-            pass
+    summary_html = f"""
+    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px;">
+        <div style="background:#1e293b; padding:10px; border-radius:6px; text-align:center; border:1px solid #334155;">
+            <div style="font-size:0.8em; color:#94a3b8;">🚨 Active Alerts</div>
+            <div style="font-size:1.4em; font-weight:bold; color:#f8fafc;">{summary.get('active', 0)}</div>
+        </div>
+        <div style="background:#2a0000; padding:10px; border-radius:6px; text-align:center; border:1px solid #7f1d1d;">
+            <div style="font-size:0.8em; color:#fca5a5;">🔴 High / Critical</div>
+            <div style="font-size:1.4em; font-weight:bold; color:#ef4444;">{summary.get('high', 0) + summary.get('critical', 0)}</div>
+        </div>
+        <div style="background:#2d2000; padding:10px; border-radius:6px; text-align:center; border:1px solid #78350f;">
+            <div style="font-size:0.8em; color:#fde68a;">🟡 Medium Risk</div>
+            <div style="font-size:1.4em; font-weight:bold; color:#f59e0b;">{summary.get('medium', 0)}</div>
+        </div>
+        <div style="background:#0f291e; padding:10px; border-radius:6px; text-align:center; border:1px solid #065f46;">
+            <div style="font-size:0.8em; color:#a7f3d0;">✅ Resolved</div>
+            <div style="font-size:1.4em; font-weight:bold; color:#10b981;">{summary.get('resolved', 0)}</div>
+        </div>
+    </div>
+    """
+    summary_ph.markdown(summary_html, unsafe_allow_html=True)
 
     active_alerts = alert_mgr.get_active_alerts()
     if active_alerts:
@@ -366,7 +442,7 @@ def format_notification_history_table(history: list) -> str:
 
 def render_dashboard_notifications(dispatcher, status_ph, history_ph=None):
     """
-    Renders Notification Delivery System status and history in dashboard.
+    Renders Notification Delivery System status and history in dashboard (Email Dispatch).
     """
     if dispatcher is None:
         return
@@ -374,13 +450,11 @@ def render_dashboard_notifications(dispatcher, status_ph, history_ph=None):
     with status_ph.container():
         try:
             import streamlit as st
-            n_col1, n_col2, n_col3, n_col4 = st.columns(4)
+            n_col1, n_col2, n_col3 = st.columns(3)
             email_status = "🟢 Configured (SMTP)" if summary["is_email_configured"] else "⚪ Not Configured"
-            sms_status = "🟢 Configured (Twilio)" if summary["is_sms_configured"] else "⚪ Not Configured"
             n_col1.metric("📧 Email Dispatch", email_status)
-            n_col2.metric("📱 SMS Dispatch", sms_status)
-            n_col3.metric("📤 Delivered", summary["total_sent"])
-            n_col4.metric("❌ Failures", summary["total_failed"])
+            n_col2.metric("📤 Delivered", summary["total_sent"])
+            n_col3.metric("❌ Failures", summary["total_failed"])
 
             last_attempt = summary.get("last_attempt_time")
             if last_attempt:
